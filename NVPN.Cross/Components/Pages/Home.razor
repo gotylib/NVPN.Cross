@@ -1,0 +1,101 @@
+﻿@page "/"
+@using NVPN.Native.Services
+@using NVPN.Native.Services.Interfaces
+@inject IVpnService VpnService
+@implements IDisposable
+
+<div class="vpn-test-container">
+    <h1>VPN Connection Tester</h1>
+
+    <div class="connection-status">
+        <span class="status-label">Status:</span>
+        <span class="status-badge @status.ToString().ToLower()">@status</span>
+    </div>
+
+    <div class="connection-form">
+        <div class="form-group">
+            <label>VLESS Link:</label>
+            <textarea @bind="vlessLink" class="form-control" rows="4"
+                      placeholder="vless://uuid@server:port?params..."></textarea>
+        </div>
+
+        <div class="action-buttons">
+            @if (status == VpnStatus.Disconnected || status == VpnStatus.Error)
+            {
+                <button @onclick="Connect" class="btn connect-btn"
+                        disabled="@(status == VpnStatus.Connecting)">
+                    @(status == VpnStatus.Connecting ? "Connecting..." : "Connect")
+                </button>
+            }
+            else
+            {
+                <button @onclick="Disconnect" class="btn disconnect-btn"
+                        disabled="@(status == VpnStatus.Disconnecting)">
+                    @(status == VpnStatus.Disconnecting ? "Disconnecting..." : "Disconnect")
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="connection-log">
+        <h3>Connection Log</h3>
+        <textarea readonly class="log-output">@logText</textarea>
+    </div>
+</div>
+
+@code {
+    private VpnStatus status = VpnStatus.Disconnected;
+    private string vlessLink = "";
+    private string logText = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        VpnService.StatusChanged += OnStatusChanged;
+        status = await VpnService.GetStatusAsync();
+        AddLog("VPN tester initialized");
+    }
+
+    private async Task Connect()
+    {
+        try
+        {
+            AddLog("Parsing VLESS link...");
+            var options = VlessLinkParser.Parse(vlessLink);
+
+            AddLog($"Connecting to {options.ServerAddress}:{options.ServerPort}...");
+            var result = await VpnService.ConnectAsync(options);
+
+            AddLog(result ? "Connected successfully" : "Connection failed");
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Error: {ex.Message}");
+            status = VpnStatus.Error;
+        }
+    }
+
+    private async Task Disconnect()
+    {
+        AddLog("Disconnecting...");
+        await VpnService.DisconnectAsync();
+        AddLog("Disconnected");
+    }
+
+    private void OnStatusChanged(object sender, VpnStatus newStatus)
+    {
+        status = newStatus;
+        AddLog($"Status changed to: {newStatus}");
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void AddLog(string message)
+    {
+        logText = $"[{DateTime.Now:HH:mm:ss}] {message}\n{logText}";
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        VpnService.StatusChanged -= OnStatusChanged;
+    }
+}
