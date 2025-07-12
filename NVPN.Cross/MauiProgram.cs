@@ -1,9 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-using NVPN.Cross;
-using NVPN.Native.Services;
-using NVPN.Native.Services.Interfaces;
+// using MudBlazor.Services;
 
-namespace NVPN.Native
+namespace NVPN.Cross
 {
     public static class MauiProgram
     {
@@ -18,25 +16,14 @@ namespace NVPN.Native
                 });
 
             builder.Services.AddMauiBlazorWebView();
+            // builder.Services.AddMudServices(); // Временно отключено
 
 #if DEBUG
             builder.Services.AddBlazorWebViewDeveloperTools();
-            builder.Logging.AddDebug();
+    		builder.Logging.AddDebug();
 #endif
-
-            // Регистрация сервисов
-            RegisterServices(builder.Services);
 
             return builder.Build();
-        }
-
-        private static void RegisterServices(IServiceCollection services)
-        {
-
-            // Платформо-зависимая регистрация сервиса VPN
-#if ANDROID
-            services.AddSingleton<IVpnService, Platforms.Android.Services.AndroidVpnService>();
-#endif
         }
     }
 }
