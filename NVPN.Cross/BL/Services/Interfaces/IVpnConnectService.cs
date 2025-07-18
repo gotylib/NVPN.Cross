@@ -5,8 +5,8 @@ namespace NVPN.Cross.BL.Services.Interfaces
 {
     internal interface IVpnConnectService
     {
-        internal bool Connect(VlessProfile profile);
+        internal bool Connect(VlessProfile profile, out string errorMsg);
 
-        internal bool Disconnect(VlessProfile profile);
+        internal bool Disconnect(VlessProfile profile, out string errorMsg);
     }
 }

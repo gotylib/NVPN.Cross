@@ -1,9 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Web;
+﻿using System.Web;
+using System.IO;
 
 namespace NVPN.Cross.BL.Dal.Models
 {
@@ -50,8 +46,9 @@ namespace NVPN.Cross.BL.Dal.Models
             };
         }
 
-        internal static object GenerateXrayConfig(VlessProfile p)
+        internal static object GenerateXrayConfig(VlessProfile p, int inboundPort)
         {
+            var tempDir = Path.GetTempPath();
             var realitySettings = p.Security == "reality"
                 ? new
                 {
@@ -68,26 +65,40 @@ namespace NVPN.Cross.BL.Dal.Models
             {
                 log = new
                 {
-                    access = "access.log",
-                    error = "error.log",
+                    access = Path.Combine(tempDir, "xray_access.log"),
+                    error = Path.Combine(tempDir, "xray_error.log"),
                     loglevel = "warning"
+                },
+                dns = new
+                {
+                    servers = new object[]
+                    {
+                        "8.8.8.8",
+                        "1.1.1.1",
+                        "localhost"
+                    }
                 },
                 inbounds = new object[]
                 {
                     new
                     {
-                        tag = "tun-in",
-                        protocol = "tun",
+                        tag = "socks-in",
+                        protocol = "socks",
                         listen = "127.0.0.1",
-                        port = 3001,
+                        port = inboundPort,
                         settings = new
                         {
-                            name = "xray-tun",
-                            address = new string[] { "10.0.0.2/30", "fdfe:dcba:9876::2/126" },
-                            gateway = new string[] { "10.0.0.1", "fdfe:dcba:9876::1" },
-                            mtu = 1500,
-                            stack = "system"
+                            udp = true,
+                            auth = "noauth"
                         }
+                    },
+                    new
+                    {
+                        tag = "http-in",
+                        protocol = "http",
+                        listen = "127.0.0.1",
+                        port = inboundPort + 1,
+                        settings = new { }
                     }
                 },
                 outbounds = new object[]
@@ -147,7 +158,7 @@ namespace NVPN.Cross.BL.Dal.Models
                         new
                         {
                             type = "field",
-                            inboundTag = new string[] { "tun-in" },
+                            inboundTag = new string[] { "socks-in", "http-in" },
                             outboundTag = "proxy"
                         },
                         new
@@ -161,6 +172,12 @@ namespace NVPN.Cross.BL.Dal.Models
                             type = "field",
                             domain = new string[] { "geosite:category-ads-all" },
                             outboundTag = "block"
+                        },
+                        new
+                        {
+                            type = "field",
+                            ip = new string[] { "0.0.0.0/0" },
+                            outboundTag = "proxy"
                         }
                     }
                 }
