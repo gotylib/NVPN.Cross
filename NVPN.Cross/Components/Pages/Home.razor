@@ -1,5 +1,7 @@
 ﻿@page "/"
 
+@inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
+
 @* --- Стили прямо в файле для простоты примера --- *@
 <style>
     .vpn-panel {
@@ -164,14 +166,21 @@
 
 <div class="vpn-panel">
     <div class="header">@timerDisplay</div>
-    <button class="circle-btn @(isConnected ? "connected" : "disconnected")" @onclick="ToggleConnection">
+    <div style="padding: 0 24px 10px 24px;">
+        <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." style="width:100%;padding:8px 10px;border-radius:8px;border:none;margin-bottom:10px;font-size:1rem;outline:none;" />
+        @if (!string.IsNullOrEmpty(errorMsg))
+        {
+            <div style="color:#ff6b6b;font-size:0.95rem;margin-bottom:6px;white-space:pre-line;">@errorMsg</div>
+        }
+    </div>
+    <button class="circle-btn @(isConnected ? "connected" : "disconnected")" @onclick="ToggleConnection" disabled="@isBusy">
         @if (isConnected)
         {
-            <span>&#10073;&#10073;</span> @* Pause icon *@
+            <span>&#10073;&#10073;</span>
         }
         else
         {
-            <span>&#11044;</span> @* Power icon (circle) *@
+            <span>&#11044;</span>
         }
     </button>
     <div class="status">@(isConnected ? "Подключено" : "Не подключено")</div>
@@ -210,10 +219,13 @@
 
 @code {
     private bool isConnected = false;
+    private bool isBusy = false;
     private string timerDisplay = "00:00:00";
     private System.Timers.Timer? timer;
     private int seconds = 0;
     private string? showPopup = null;
+    private string vlessUrl = string.Empty;
+    private string errorMsg = string.Empty;
 
     protected override void OnInitialized()
     {
@@ -230,17 +242,57 @@
         timer.Start();
     }
 
-    private void ToggleConnection()
+    private async Task ToggleConnection()
     {
-        isConnected = !isConnected;
-        if (isConnected)
+        errorMsg = string.Empty;
+        isBusy = true;
+        try
         {
-            seconds = 0;
-            timerDisplay = "00:00:00";
+            if (!isConnected)
+            {
+                if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+                {
+                    errorMsg = "Введите корректную VLESS ссылку";
+                    return;
+                }
+                var profile = NVPN.Cross.BL.Dal.Models.VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                string err;
+                var ok = VpnService.Connect(profile, out err);
+                if (ok)
+                {
+                    isConnected = true;
+                    seconds = 0;
+                    timerDisplay = "00:00:00";
+                }
+                else
+                {
+                    errorMsg = err ?? "Ошибка подключения к VPN";
+                }
+            }
+            else
+            {
+                var profile = NVPN.Cross.BL.Dal.Models.VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                string err;
+                var ok = VpnService.Disconnect(profile, out err);
+                if (ok)
+                {
+                    isConnected = false;
+                    timerDisplay = "00:00:00";
+                }
+                else
+                {
+                    errorMsg = err ?? "Ошибка отключения VPN";
+                }
+            }
         }
-        else
+        catch (Exception ex)
         {
-            timerDisplay = "00:00:00";
+            errorMsg = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
         }
     }
 
