@@ -1,13 +1,13 @@
 ﻿using System.Web;
-using System.IO;
 
-namespace NVPN.Cross.BL.Dal.Models
+namespace NVPN.Cross.Dal.Models
 {
-    internal class VlessProfile
+    public class VlessProfile
     {
+        public int Id { get; set; }
         public string Address { get; set; }
         public int Port { get; set; }
-        public string Id { get; set; }
+        public string UserInfo { get; set; }
         public string Security { get; set; }
         public string Network { get; set; }
         public string Flow { get; set; }
@@ -33,7 +33,7 @@ namespace NVPN.Cross.BL.Dal.Models
             {
                 Address = host,
                 Port = port,
-                Id = user,
+                UserInfo = user,
                 Security = query["security"] ?? "none",
                 Network = query["type"] ?? "tcp",
                 Flow = query["flow"] ?? string.Empty,
@@ -131,7 +131,7 @@ namespace NVPN.Cross.BL.Dal.Models
                         {
                             network = p.Network,
                             security = p.Security,
-                            realitySettings = realitySettings,
+                            realitySettings,
                             tlsSettings = p.Security == "tls" ? new
                             {
                                 serverName = p.Sni,
