@@ -1,4 +1,5 @@
 ﻿@page "/"
+@using NVPN.Cross.Dal.Models
 
 @inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
 
@@ -255,7 +256,7 @@
                     errorMsg = "Введите корректную VLESS ссылку";
                     return;
                 }
-                var profile = NVPN.Cross.BL.Dal.Models.VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                var profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
                 string err;
                 var ok = VpnService.Connect(profile, out err);
                 if (ok)
@@ -271,7 +272,7 @@
             }
             else
             {
-                var profile = NVPN.Cross.BL.Dal.Models.VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                var profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
                 string err;
                 var ok = VpnService.Disconnect(profile, out err);
                 if (ok)

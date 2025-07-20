@@ -1,6 +1,6 @@
 ﻿using Android.Net;
-using NVPN.Cross.BL.Dal.Models;
 using NVPN.Cross.BL.Services.Interfaces;
+using NVPN.Cross.Dal.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;

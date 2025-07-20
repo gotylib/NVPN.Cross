@@ -1,4 +1,4 @@
-﻿using NVPN.Cross.BL.Dal.Models;
+﻿using NVPN.Cross.Dal.Models;
 
 
 namespace NVPN.Cross.BL.Services.Interfaces

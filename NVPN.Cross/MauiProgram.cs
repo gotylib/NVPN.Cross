@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using NVPN.Cross.BL.Services.Interfaces;
+using NVPN.Cross.Dal;
 
 
 // using MudBlazor.Services;
@@ -19,6 +20,9 @@ namespace NVPN.Cross
                 });
 
             builder.Services.AddMauiBlazorWebView();
+
+            var dbContext = new VpnDbContext();
+            dbContext.Database.EnsureCreated();
             // builder.Services.AddMudServices(); // Временно отключено
 
 #if WINDOWS

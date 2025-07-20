@@ -1,4 +1,3 @@
-using NVPN.Cross.BL.Dal.Models;
 using NVPN.Cross.BL.Services.Interfaces;
 using System;
 using System.Diagnostics;
@@ -6,6 +5,7 @@ using System.IO;
 using System.Text.Json;
 using System.Net.NetworkInformation;
 using System.Linq;
+using NVPN.Cross.Dal.Models;
 
 namespace NVPN.Cross.Platforms.Windows.WindowsServices
 {
