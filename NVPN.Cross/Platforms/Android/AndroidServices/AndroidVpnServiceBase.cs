@@ -12,7 +12,7 @@ using Process = System.Diagnostics.Process;
 
 namespace NVPN.Cross.Platforms.Android.AndroidServices
 {
-    [Service(Permission = "android.permission.BIND_VPN_SERVICE")]
+    [Service(Permission = "android.permission.BIND_VPN_SERVICE", Exported = false)]
     [IntentFilter([ServiceInterface])]
     public class AndroidVpnServiceBasen : VpnService
     {

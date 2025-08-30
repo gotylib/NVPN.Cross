@@ -60,7 +60,8 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                 var psi = new ProcessStartInfo
                 {
                     FileName = xrayExePath,
-                    Arguments = $"-c {tempConfigPath}",
+                    // Quote config path to handle spaces in paths
+                    Arguments = $"-c \"{tempConfigPath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardError = true,
@@ -71,9 +72,20 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                     xrayProcess = Process.Start(psi);
                     if (xrayProcess == null || xrayProcess.HasExited)
                     {
+                        // Read any error output for diagnostics
                         string stdErr = xrayProcess?.StandardError.ReadToEnd() ?? "process not started";
                         string stdOut = xrayProcess?.StandardOutput.ReadToEnd() ?? "";
                         errorMsg = $"Не удалось запустить xray.exe\nSTDERR: {stdErr}\nSTDOUT: {stdOut}";
+                        return false;
+                    }
+                    // Optional: small delay to allow background startup
+                    System.Threading.Thread.Sleep(200);
+                    // If xray.exe exited immediately, capture error output
+                    if (xrayProcess.HasExited)
+                    {
+                        string stdErrNow = xrayProcess.StandardError.ReadToEnd();
+                        string stdOutNow = xrayProcess.StandardOutput.ReadToEnd();
+                        errorMsg = $"xray.exe сразу завершился. Попробуйте запустить вручную:\nSTDERR: {stdErrNow}\nSTDOUT: {stdOutNow}";
                         return false;
                     }
                 }
@@ -97,10 +109,12 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                     errorMsg = "Ошибка установки ProxyEnable через reg";
                     return false;
                 }
+                // Устанавливаем HTTP прокси для системных приложений (входной HTTP порт = selectedPort + 1)
+                int httpPort = selectedPort + 1;
                 var setProxyServer = new ProcessStartInfo
                 {
                     FileName = "reg",
-                    Arguments = $"add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" /v ProxyServer /t REG_SZ /d 127.0.0.1:{selectedPort} /f",
+                    Arguments = $"add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" /v ProxyServer /t REG_SZ /d 127.0.0.1:{httpPort} /f",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -109,6 +123,31 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                 {
                     errorMsg = "Ошибка установки ProxyServer через reg";
                     return false;
+                }
+
+                // 4. Try to synchronize WinHTTP proxy from IE settings (may require admin privileges)
+                try
+                {
+                    var syncWinHttp = new ProcessStartInfo
+                    {
+                        FileName = "netsh",
+                        Arguments = "winhttp import proxy source=ie",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    var proc3 = Process.Start(syncWinHttp);
+                    proc3.WaitForExit();
+                    if (proc3.ExitCode != 0)
+                    {
+                        // Warn user but do not abort connection
+                        errorMsg = "Предупреждение: не удалось синхронизировать WinHTTP прокси (ExitCode=" + proc3.ExitCode + "). " +
+                                   "Возможно, требуются права администратора.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Warn user but continue
+                    errorMsg = "Предупреждение: ошибка синхронизации WinHTTP прокси: " + ex.Message;
                 }
 
                 return true;

@@ -3,218 +3,95 @@
 
 @inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
 
-@* --- Стили прямо в файле для простоты примера --- *@
-<style>
-    .vpn-panel {
-        background: #181818;
-        border-radius: 18px;
-        width: 340px;
-        margin: 40px auto;
-        box-shadow: 0 4px 32px #0008;
-        padding: 0;
-        font-family: 'Segoe UI', Arial, sans-serif;
-        color: #fff;
-        position: relative;
-    }
-
-        .vpn-panel .header {
-            text-align: center;
-            font-size: 2rem;
-            margin-top: 24px;
-            margin-bottom: 12px;
-            letter-spacing: 2px;
-        }
-
-        .vpn-panel .circle-btn {
-            width: 70px;
-            height: 70px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 12px auto;
-            font-size: 2.5rem;
-            border: none;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-            .vpn-panel .circle-btn.connected {
-                background: #19c37d;
-                color: #181818;
-            }
-
-            .vpn-panel .circle-btn.disconnected {
-                background: #222b3a;
-                color: #1976d2;
-            }
-
-        .vpn-panel .status {
-            text-align: center;
-            margin-bottom: 18px;
-            font-size: 1.1rem;
-            background: #232323;
-            border-radius: 12px;
-            padding: 6px 0;
-            width: 160px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .vpn-panel .block {
-            background: #232323;
-            border-radius: 12px;
-            margin: 10px 18px;
-            padding: 10px 14px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-size: 1.1rem;
-            cursor: pointer;
-        }
-
-            .vpn-panel .block .icon {
-                font-size: 1.3rem;
-                margin-right: 8px;
-            }
-
-        .vpn-panel .configs {
-            margin: 18px 18px 0 18px;
-            background: #232323;
-            border-radius: 12px;
-            padding: 0 0 8px 0;
-        }
-
-        .vpn-panel .configs-title {
-            font-size: 0.95rem;
-            color: #aaa;
-            padding: 8px 0 0 14px;
-            letter-spacing: 1px;
-        }
-
-        .vpn-panel .config-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: #1976d2;
-            color: #fff;
-            border-radius: 8px;
-            margin: 8px 8px 0 8px;
-            padding: 10px 12px;
-            font-size: 1.1rem;
-            position: relative;
-        }
-
-            .vpn-panel .config-item .info-btn {
-                background: none;
-                border: none;
-                color: #fff;
-                font-size: 1.2rem;
-                cursor: pointer;
-                margin-left: 8px;
-                position: relative;
-            }
-
-        .vpn-panel .popup {
-            position: absolute;
-            top: 40px;
-            right: 10px;
-            background: #232323;
-            color: #fff;
-            border-radius: 10px;
-            box-shadow: 0 2px 12px #000a;
-            padding: 14px 18px;
-            z-index: 10;
-            min-width: 180px;
-            font-size: 0.98rem;
-        }
-
-            .vpn-panel .popup .close {
-                position: absolute;
-                top: 6px;
-                right: 10px;
-                color: #aaa;
-                cursor: pointer;
-                font-size: 1.1rem;
-            }
-
-        .vpn-panel .footer {
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            background: #181818;
-            border-top: 1px solid #232323;
-            border-radius: 0 0 18px 18px;
-            padding: 10px 0 2px 0;
-            margin-top: 18px;
-        }
-
-        .vpn-panel .footer-btn {
-            background: none;
-            border: none;
-            color: #1976d2;
-            font-size: 1.6rem;
-            cursor: pointer;
-            padding: 4px 12px;
-            border-radius: 8px;
-            transition: background 0.2s;
-        }
-
-            .vpn-panel .footer-btn.active {
-                background: #232323;
-            }
-</style>
-
-<div class="vpn-panel">
-    <div class="header">@timerDisplay</div>
-    <div style="padding: 0 24px 10px 24px;">
-        <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." style="width:100%;padding:8px 10px;border-radius:8px;border:none;margin-bottom:10px;font-size:1rem;outline:none;" />
-        @if (!string.IsNullOrEmpty(errorMsg))
-        {
-            <div style="color:#ff6b6b;font-size:0.95rem;margin-bottom:6px;white-space:pre-line;">@errorMsg</div>
-        }
-    </div>
-    <button class="circle-btn @(isConnected ? "connected" : "disconnected")" @onclick="ToggleConnection" disabled="@isBusy">
-        @if (isConnected)
-        {
-            <span>&#10073;&#10073;</span>
-        }
-        else
-        {
-            <span>&#11044;</span>
-        }
-    </button>
-    <div class="status">@(isConnected ? "Подключено" : "Не подключено")</div>
-
-    <div class="block" @onclick='()=>ShowPopup(" routes")'>
-        <span><span class="icon">&#8644;</span>Маршрутизация</span>
-        <span>&#8250;</span>
-    </div>
-    <div class="block" @onclick='()=>ShowPopup(" services")'>
-        <span><span class="icon">&#119070;</span>Сервисы</span>
-        <span>&#8250;</span>
-    </div>
-
-    <div class="configs">
-        <div class="configs-title">КОНФИГУРАЦИИ</div>
-        <div class="config-item">
-            <span>vpn-gleb</span>
-            <button class="info-btn" @onclick:stopPropagation="true" @onclick='()=>ShowPopup(" info")'>&#9432;</button>
-            @if (showPopup == "info")
+<div class="vpn-container">
+    <div class="vpn-panel">
+        <div class="header">@timerDisplay</div>
+        
+        <div class="input-section">
+            <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
+            @if (!string.IsNullOrEmpty(errorMsg))
             {
-                <div class="popup">
-                    <span class="close" @onclick="HidePopup">&#10006;</span>
-                    <b>VLESS</b><br />
-                    Это тестовая конфигурация для vpn-gleb.<br />
-                    <small>Здесь можно вывести подробности или действия.</small>
-                </div>
+                <div class="error-message">@errorMsg</div>
             }
         </div>
-    </div>
+        
+        <div class="connection-section">
+            <button class="circle-btn @(isConnected ? "connected" : "disconnected") @(isBusy ? "loading" : "")" 
+                    @onclick="ToggleConnection" disabled="@isBusy">
+                @if (isConnected)
+                {
+                    <span style="display: flex; align-items: center; justify-content: center;">⏹</span>
+                }
+                else
+                {
+                    <span style="display: flex; align-items: center; justify-content: center; margin-left: 3px;">▶</span>
+                }
+            </button>
+            <div class="status">@(isConnected ? "Подключено" : "Не подключено")</div>
+        </div>
 
-    <div class="footer">
-        <button class="footer-btn active">&#119070;<br /><span style="font-size:0.7rem;">Подключение</span></button>
-        <button class="footer-btn">&#9881;<br /><span style="font-size:0.7rem;">Настройки</span></button>
+        <div class="menu-section">
+            <div class="menu-block" @onclick='()=>ShowPopup("routes")' style="position: relative;">
+                <span><span class="icon">🔀</span>Маршрутизация</span>
+                <span class="arrow">›</span>
+                @if (showPopup == "routes")
+                {
+                    <div class="popup-backdrop" @onclick="HidePopup">
+                        <div class="popup" @onclick:stopPropagation="true">
+                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
+                            <b>Маршрутизация</b><br />
+                            Настройка правил маршрутизации трафика через VPN.<br />
+                            <small>• Весь трафик<br />• Только определенные сайты<br />• Исключения для локальных ресурсов</small>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="menu-block" @onclick='()=>ShowPopup("services")' style="position: relative;">
+                <span><span class="icon">⚙️</span>Сервисы</span>
+                <span class="arrow">›</span>
+                @if (showPopup == "services")
+                {
+                    <div class="popup-backdrop" @onclick="HidePopup">
+                        <div class="popup" @onclick:stopPropagation="true">
+                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
+                            <b>Сервисы</b><br />
+                            Управление системными сервисами VPN.<br />
+                            <small>• Автозапуск<br />• Защита от утечек DNS<br />• Kill Switch</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="configs">
+            <div class="configs-title">Конфигурации</div>
+            <div class="config-item">
+                <span>🖥️ vpn-gleb</span>
+                <button class="info-btn" @onclick:stopPropagation="true" @onclick='()=>ShowPopup("info")'>ℹ️</button>
+                @if (showPopup == "info")
+                {
+                    <div class="popup-backdrop" @onclick="HidePopup">
+                        <div class="popup" @onclick:stopPropagation="true">
+                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
+                            <b>VLESS</b><br />
+                            Это тестовая конфигурация для vpn-gleb.<br />
+                            <small>Здесь можно вывести подробности или действия.</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="footer">
+            <button class="footer-btn active">
+                <span>🔗</span>
+                <span class="label">Подключение</span>
+            </button>
+            <button class="footer-btn">
+                <span>⚙️</span>
+                <span class="label">Настройки</span>
+            </button>
+        </div>
     </div>
 </div>
 
@@ -299,10 +176,13 @@
 
     private void ShowPopup(string popup)
     {
-        showPopup = popup;
+        showPopup = popup.Trim();
+        StateHasChanged();
     }
+    
     private void HidePopup()
     {
         showPopup = null;
+        StateHasChanged();
     }
 }

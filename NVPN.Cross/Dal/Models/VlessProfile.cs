@@ -67,7 +67,7 @@ namespace NVPN.Cross.Dal.Models
                 {
                     access = Path.Combine(tempDir, "xray_access.log"),
                     error = Path.Combine(tempDir, "xray_error.log"),
-                    loglevel = "warning"
+                    loglevel = "debug"
                 },
                 dns = new
                 {
@@ -119,7 +119,7 @@ namespace NVPN.Cross.Dal.Models
                                     {
                                         new
                                         {
-                                            id = p.Id,
+                                            id = p.UserInfo,
                                             encryption = "none",
                                             flow = string.IsNullOrEmpty(p.Flow) ? null : p.Flow
                                         }
