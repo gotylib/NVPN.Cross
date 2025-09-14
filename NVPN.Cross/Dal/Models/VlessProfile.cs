@@ -5,19 +5,19 @@ namespace NVPN.Cross.Dal.Models
     public class VlessProfile
     {
         public int Id { get; set; }
-        public string Address { get; set; }
+        public string Address { get; set; } = string.Empty;
         public int Port { get; set; }
-        public string UserInfo { get; set; }
-        public string Security { get; set; }
-        public string Network { get; set; }
-        public string Flow { get; set; }
-        public string Sni { get; set; }
-        public string PublicKey { get; set; }
-        public string Fingerprint { get; set; }
-        public string ShortId { get; set; }
-        public string Spx { get; set; }
-        public string Sid { get; set; }
-        public string Remarks { get; set; }
+        public string UserInfo { get; set; } = string.Empty;
+        public string Security { get; set; } = string.Empty;
+        public string Network { get; set; } = string.Empty;
+        public string Flow { get; set; } = string.Empty;
+        public string Sni { get; set; } = string.Empty;
+        public string PublicKey { get; set; } = string.Empty;
+        public string Fingerprint { get; set; } = string.Empty;
+        public string ShortId { get; set; } = string.Empty;
+        public string Spx { get; set; } = string.Empty;
+        public string Sid { get; set; } = string.Empty;
+        public string Remarks { get; set; } = string.Empty;
 
         internal static VlessProfile ParseVlessUrl(string url)
         {
@@ -42,7 +42,8 @@ namespace NVPN.Cross.Dal.Models
                 Fingerprint = query["fp"] ?? string.Empty,
                 ShortId = query["sid"] ?? string.Empty,
                 Spx = query["spx"] ?? string.Empty,
-                Remarks = fragment
+                Sid = query["sid"] ?? string.Empty,
+                Remarks = fragment ?? string.Empty
             };
         }
 

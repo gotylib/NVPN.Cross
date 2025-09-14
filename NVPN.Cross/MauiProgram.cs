@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using NVPN.Cross.BL.Services;
 using NVPN.Cross.BL.Services.Interfaces;
 using NVPN.Cross.Dal;
 
@@ -21,9 +22,12 @@ namespace NVPN.Cross
 
             builder.Services.AddMauiBlazorWebView();
 
-            var dbContext = new VpnDbContext();
-            dbContext.Database.EnsureCreated();
+            // Регистрируем DbContext в DI контейнере
+            builder.Services.AddDbContext<VpnDbContext>();
+            
             // builder.Services.AddMudServices(); // Временно отключено
+
+            builder.Services.AddScoped<IVlessConfigService, VlessConfigService>();
 
 #if WINDOWS
             builder.Services.AddScoped<IVpnConnectService, Platforms.Windows.WindowsServices.WindowsVpnConnectService>();
@@ -37,7 +41,25 @@ namespace NVPN.Cross
     		builder.Logging.AddDebug();
 #endif
 
-            return builder.Build();
+            var app = builder.Build();
+            
+            // Инициализируем базу данных после создания приложения
+            Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = app.Services.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<VpnDbContext>();
+                    await dbContext.Database.EnsureCreatedAsync();
+                }
+                catch (Exception ex)
+                {
+                    // Логируем ошибку, но не падаем
+                    System.Diagnostics.Debug.WriteLine($"Database initialization error: {ex.Message}");
+                }
+            });
+
+            return app;
         }
     }
 }

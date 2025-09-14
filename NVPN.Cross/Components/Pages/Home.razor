@@ -2,6 +2,7 @@
 @using NVPN.Cross.Dal.Models
 
 @inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
+@inject NVPN.Cross.BL.Services.Interfaces.IVlessConfigService VlessConfigService
 
 <div class="vpn-container">
     <div class="vpn-panel">
@@ -13,6 +14,7 @@
             {
                 <div class="error-message">@errorMsg</div>
             }
+            <button class="save-btn" @onclick="SaveConfig" disabled="@isBusy">Сохранить конфигурацию</button>
         </div>
         
         <div class="connection-section">
@@ -65,21 +67,19 @@
 
         <div class="configs">
             <div class="configs-title">Конфигурации</div>
-            <div class="config-item">
-                <span>🖥️ vpn-gleb</span>
-                <button class="info-btn" @onclick:stopPropagation="true" @onclick='()=>ShowPopup("info")'>ℹ️</button>
-                @if (showPopup == "info")
+            @if (vlessProfiles != null && vlessProfiles.Any())
+            {
+                @foreach (var profile in vlessProfiles)
                 {
-                    <div class="popup-backdrop" @onclick="HidePopup">
-                        <div class="popup" @onclick:stopPropagation="true">
-                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
-                            <b>VLESS</b><br />
-                            Это тестовая конфигурация для vpn-gleb.<br />
-                            <small>Здесь можно вывести подробности или действия.</small>
-                        </div>
+                    <div class="config-item @(selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
+                        <span>@profile.Remarks (@profile.Address:@profile.Port)</span>
                     </div>
                 }
-            </div>
+            }
+            else
+            {
+                <div class="no-configs">Нет сохраненных конфигураций</div>
+            }
         </div>
 
         <div class="footer">
@@ -104,8 +104,10 @@
     private string? showPopup = null;
     private string vlessUrl = string.Empty;
     private string errorMsg = string.Empty;
+    private List<VlessProfile> vlessProfiles = new();
+    private VlessProfile? selectedProfile;
 
-    protected override void OnInitialized()
+    protected override async void OnInitialized()
     {
         timer = new System.Timers.Timer(1000);
         timer.Elapsed += (s, e) =>
@@ -118,22 +120,68 @@
             }
         };
         timer.Start();
+
+        vlessProfiles = await VlessConfigService.GetConfigs();
     }
 
-    private async Task ToggleConnection()
+    private async Task SaveConfig()
     {
         errorMsg = string.Empty;
         isBusy = true;
         try
         {
-            if (!isConnected)
+            if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+            {
+                errorMsg = "Введите корректную VLESS ссылку";
+                return;
+            }
+            await VlessConfigService.SaveConfigAsync(vlessUrl.Trim());
+            vlessProfiles = await VlessConfigService.GetConfigs();
+            vlessUrl = string.Empty;
+            selectedProfile = null;
+        }
+        catch (Exception ex)
+        {
+            errorMsg = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectProfile(VlessProfile profile)
+    {
+        selectedProfile = profile;
+        errorMsg = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task ToggleConnection()
+    {
+        await Task.Yield();
+        errorMsg = string.Empty;
+        isBusy = true;
+        try
+        {
+            VlessProfile profile;
+            if (selectedProfile != null)
+            {
+                profile = selectedProfile;
+            }
+            else
             {
                 if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
                 {
                     errorMsg = "Введите корректную VLESS ссылку";
                     return;
                 }
-                var profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+            }
+
+            if (!isConnected)
+            {
                 string err;
                 var ok = VpnService.Connect(profile, out err);
                 if (ok)
@@ -149,7 +197,6 @@
             }
             else
             {
-                var profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
                 string err;
                 var ok = VpnService.Disconnect(profile, out err);
                 if (ok)
