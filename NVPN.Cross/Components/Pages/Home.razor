@@ -1,101 +1,235 @@
 ﻿@page "/"
-@using NVPN.Native.Services
-@using NVPN.Native.Services.Interfaces
-@inject IVpnService VpnService
-@implements IDisposable
+@using NVPN.Cross.Dal.Models
 
-<div class="vpn-test-container">
-    <h1>VPN Connection Tester</h1>
+@inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
+@inject NVPN.Cross.BL.Services.Interfaces.IVlessConfigService VlessConfigService
 
-    <div class="connection-status">
-        <span class="status-label">Status:</span>
-        <span class="status-badge @status.ToString().ToLower()">@status</span>
-    </div>
-
-    <div class="connection-form">
-        <div class="form-group">
-            <label>VLESS Link:</label>
-            <textarea @bind="vlessLink" class="form-control" rows="4"
-                      placeholder="vless://uuid@server:port?params..."></textarea>
+<div class="vpn-container">
+    <div class="vpn-panel">
+        <div class="header">@timerDisplay</div>
+        
+        <div class="input-section">
+            <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
+            @if (!string.IsNullOrEmpty(errorMsg))
+            {
+                <div class="error-message">@errorMsg</div>
+            }
+            <button class="save-btn" @onclick="SaveConfig" disabled="@isBusy">Сохранить конфигурацию</button>
+        </div>
+        
+        <div class="connection-section">
+            <button class="circle-btn @(isConnected ? "connected" : "disconnected") @(isBusy ? "loading" : "")" 
+                    @onclick="ToggleConnection" disabled="@isBusy">
+                @if (isConnected)
+                {
+                    <span style="display: flex; align-items: center; justify-content: center;">⏹</span>
+                }
+                else
+                {
+                    <span style="display: flex; align-items: center; justify-content: center; margin-left: 3px;">▶</span>
+                }
+            </button>
+            <div class="status">@(isConnected ? "Подключено" : "Не подключено")</div>
         </div>
 
-        <div class="action-buttons">
-            @if (status == VpnStatus.Disconnected || status == VpnStatus.Error)
+        <div class="menu-section">
+            <div class="menu-block" @onclick='()=>ShowPopup("routes")' style="position: relative;">
+                <span><span class="icon">🔀</span>Маршрутизация</span>
+                <span class="arrow">›</span>
+                @if (showPopup == "routes")
+                {
+                    <div class="popup-backdrop" @onclick="HidePopup">
+                        <div class="popup" @onclick:stopPropagation="true">
+                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
+                            <b>Маршрутизация</b><br />
+                            Настройка правил маршрутизации трафика через VPN.<br />
+                            <small>• Весь трафик<br />• Только определенные сайты<br />• Исключения для локальных ресурсов</small>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="menu-block" @onclick='()=>ShowPopup("services")' style="position: relative;">
+                <span><span class="icon">⚙️</span>Сервисы</span>
+                <span class="arrow">›</span>
+                @if (showPopup == "services")
+                {
+                    <div class="popup-backdrop" @onclick="HidePopup">
+                        <div class="popup" @onclick:stopPropagation="true">
+                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
+                            <b>Сервисы</b><br />
+                            Управление системными сервисами VPN.<br />
+                            <small>• Автозапуск<br />• Защита от утечек DNS<br />• Kill Switch</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="configs">
+            <div class="configs-title">Конфигурации</div>
+            @if (vlessProfiles != null && vlessProfiles.Any())
             {
-                <button @onclick="Connect" class="btn connect-btn"
-                        disabled="@(status == VpnStatus.Connecting)">
-                    @(status == VpnStatus.Connecting ? "Connecting..." : "Connect")
-                </button>
+                @foreach (var profile in vlessProfiles)
+                {
+                    <div class="config-item @(selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
+                        <span>@profile.Remarks (@profile.Address:@profile.Port)</span>
+                    </div>
+                }
             }
             else
             {
-                <button @onclick="Disconnect" class="btn disconnect-btn"
-                        disabled="@(status == VpnStatus.Disconnecting)">
-                    @(status == VpnStatus.Disconnecting ? "Disconnecting..." : "Disconnect")
-                </button>
+                <div class="no-configs">Нет сохраненных конфигураций</div>
             }
         </div>
-    </div>
 
-    <div class="connection-log">
-        <h3>Connection Log</h3>
-        <textarea readonly class="log-output">@logText</textarea>
+        <div class="footer">
+            <button class="footer-btn active">
+                <span>🔗</span>
+                <span class="label">Подключение</span>
+            </button>
+            <button class="footer-btn">
+                <span>⚙️</span>
+                <span class="label">Настройки</span>
+            </button>
+        </div>
     </div>
 </div>
 
 @code {
-    private VpnStatus status = VpnStatus.Disconnected;
-    private string vlessLink = "";
-    private string logText = "";
+    private bool isConnected = false;
+    private bool isBusy = false;
+    private string timerDisplay = "00:00:00";
+    private System.Timers.Timer? timer;
+    private int seconds = 0;
+    private string? showPopup = null;
+    private string vlessUrl = string.Empty;
+    private string errorMsg = string.Empty;
+    private List<VlessProfile> vlessProfiles = new();
+    private VlessProfile? selectedProfile;
 
-    protected override async Task OnInitializedAsync()
+    protected override async void OnInitialized()
     {
-        VpnService.StatusChanged += OnStatusChanged;
-        status = await VpnService.GetStatusAsync();
-        AddLog("VPN tester initialized");
+        timer = new System.Timers.Timer(1000);
+        timer.Elapsed += (s, e) =>
+        {
+            if (isConnected)
+            {
+                seconds++;
+                timerDisplay = TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss");
+                InvokeAsync(StateHasChanged);
+            }
+        };
+        timer.Start();
+
+        vlessProfiles = await VlessConfigService.GetConfigs();
     }
 
-    private async Task Connect()
+    private async Task SaveConfig()
     {
+        errorMsg = string.Empty;
+        isBusy = true;
         try
         {
-            AddLog("Parsing VLESS link...");
-            var options = VlessLinkParser.Parse(vlessLink);
-
-            AddLog($"Connecting to {options.ServerAddress}:{options.ServerPort}...");
-            var result = await VpnService.ConnectAsync(options);
-
-            AddLog(result ? "Connected successfully" : "Connection failed");
+            if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+            {
+                errorMsg = "Введите корректную VLESS ссылку";
+                return;
+            }
+            await VlessConfigService.SaveConfigAsync(vlessUrl.Trim());
+            vlessProfiles = await VlessConfigService.GetConfigs();
+            vlessUrl = string.Empty;
+            selectedProfile = null;
         }
         catch (Exception ex)
         {
-            AddLog($"Error: {ex.Message}");
-            status = VpnStatus.Error;
+            errorMsg = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
         }
     }
 
-    private async Task Disconnect()
+    private void SelectProfile(VlessProfile profile)
     {
-        AddLog("Disconnecting...");
-        await VpnService.DisconnectAsync();
-        AddLog("Disconnected");
-    }
-
-    private void OnStatusChanged(object sender, VpnStatus newStatus)
-    {
-        status = newStatus;
-        AddLog($"Status changed to: {newStatus}");
-        InvokeAsync(StateHasChanged);
-    }
-
-    private void AddLog(string message)
-    {
-        logText = $"[{DateTime.Now:HH:mm:ss}] {message}\n{logText}";
+        selectedProfile = profile;
+        errorMsg = string.Empty;
         StateHasChanged();
     }
 
-    public void Dispose()
+    private async Task ToggleConnection()
     {
-        VpnService.StatusChanged -= OnStatusChanged;
+        await Task.Yield();
+        errorMsg = string.Empty;
+        isBusy = true;
+        try
+        {
+            VlessProfile profile;
+            if (selectedProfile != null)
+            {
+                profile = selectedProfile;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+                {
+                    errorMsg = "Введите корректную VLESS ссылку";
+                    return;
+                }
+                profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+            }
+
+            if (!isConnected)
+            {
+                string err;
+                var ok = VpnService.Connect(profile, out err);
+                if (ok)
+                {
+                    isConnected = true;
+                    seconds = 0;
+                    timerDisplay = "00:00:00";
+                }
+                else
+                {
+                    errorMsg = err ?? "Ошибка подключения к VPN";
+                }
+            }
+            else
+            {
+                string err;
+                var ok = VpnService.Disconnect(profile, out err);
+                if (ok)
+                {
+                    isConnected = false;
+                    timerDisplay = "00:00:00";
+                }
+                else
+                {
+                    errorMsg = err ?? "Ошибка отключения VPN";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMsg = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ShowPopup(string popup)
+    {
+        showPopup = popup.Trim();
+        StateHasChanged();
+    }
+    
+    private void HidePopup()
+    {
+        showPopup = null;
+        StateHasChanged();
     }
 }

@@ -1,0 +1,521 @@
+/* VPN Panel - Modern Fullscreen Design like Hiddify */
+
+.vpn-container {
+    min-height: 100vh;
+    width: 100vw;
+    background: #1a1a1a;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+}
+
+.vpn-panel {
+    background: transparent;
+    border-radius: 0;
+    width: 100%;
+    max-width: none;
+    box-shadow: none;
+    color: var(--text-primary);
+    position: relative;
+    backdrop-filter: none;
+    border: none;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 1rem 0 1rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 100px;
+}
+
+/* Header */
+.header {
+    text-align: center;
+    font-size: 2.5rem;
+    font-weight: 300;
+    margin: 1rem 0 2rem 0;
+    letter-spacing: 2px;
+    color: var(--text-primary);
+    padding-top: 1rem;
+}
+
+/* Input Section */
+.input-section {
+    padding: 0 1.5rem 1rem 1.5rem;
+}
+
+.vless-input {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-md);
+    border: 2px solid var(--border-color);
+    background: var(--surface-light);
+    color: var(--text-primary);
+    font-size: 1rem;
+    outline: none;
+    transition: all 0.3s ease;
+    margin-bottom: 0.75rem;
+}
+
+.vless-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.vless-input::placeholder {
+    color: var(--text-muted);
+}
+
+.error-message {
+    color: var(--error-color);
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+    white-space: pre-line;
+    background: rgba(239, 68, 68, 0.1);
+    padding: 0.5rem;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--error-color);
+}
+
+/* Connection Button */
+.connection-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 3rem 0;
+    flex: 1;
+    justify-content: center;
+}
+
+.circle-btn {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+    font-size: 3.5rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    font-family: 'Arial', sans-serif;
+}
+
+.circle-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.circle-btn.connected {
+    background: linear-gradient(135deg, var(--success-color), var(--success-dark));
+    color: white;
+    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.3);
+}
+
+.circle-btn.connected:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 35px rgba(16, 185, 129, 0.4);
+}
+
+.circle-btn.disconnected {
+    background: linear-gradient(135deg, var(--surface-light), var(--border-color));
+    color: var(--primary-color);
+    box-shadow: var(--shadow-md);
+}
+
+.circle-btn.disconnected:hover:not(:disabled) {
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 12px 35px rgba(99, 102, 241, 0.4);
+}
+
+.circle-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 50%;
+    background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.circle-btn:hover::before {
+    opacity: 1;
+}
+
+.status {
+    text-align: center;
+    font-size: 1.125rem;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-lg);
+    padding: 0.5rem 1.5rem;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Menu Blocks */
+.menu-section {
+    padding: 0 1rem;
+    margin-bottom: 2rem;
+}
+
+.menu-block {
+    background: var(--surface-light);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.75rem;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+}
+
+.menu-block:hover {
+    background: var(--border-color);
+    transform: translateX(4px);
+    border-color: var(--primary-color);
+}
+
+.menu-block .icon {
+    font-size: 1.25rem;
+    margin-right: 0.75rem;
+    background: linear-gradient(45deg, var(--primary-color), var(--success-color));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.menu-block .arrow {
+    font-size: 1.125rem;
+    color: var(--text-muted);
+    transition: transform 0.3s ease;
+}
+
+.menu-block:hover .arrow {
+    transform: translateX(4px);
+    color: var(--primary-color);
+}
+
+/* Configurations */
+.configs {
+    margin: 0 1rem 2rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.configs-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 1rem 1rem 0.5rem 1rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.config-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+    color: white;
+    border-radius: var(--radius-md);
+    margin: 0.5rem;
+    padding: 1rem;
+    font-size: 1rem;
+    font-weight: 500;
+    position: relative;
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow-md);
+}
+
+.config-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.config-item .info-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    font-size: 1.125rem;
+    cursor: pointer;
+    margin-left: 0.75rem;
+    padding: 0.5rem;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.config-item .info-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+/* Popup Backdrop */
+.popup-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.3s ease;
+}
+
+/* Popup */
+.popup {
+    position: relative;
+    top: auto;
+    right: auto;
+    background: #2a2a2a;
+    color: var(--text-primary);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    padding: 1rem 1.25rem;
+    z-index: 1000;
+    min-width: 250px;
+    max-width: 90vw;
+    font-size: 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(20px);
+    animation: slideInDown 0.3s ease;
+    margin: 1rem;
+}
+
+@keyframes slideInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.popup .close {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1.125rem;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.popup .close:hover {
+    color: var(--error-color);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* Footer */
+.footer {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.8);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1rem 0 calc(1rem + env(safe-area-inset-bottom));
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px);
+}
+
+.footer-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md);
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 4rem;
+}
+
+.footer-btn:hover {
+    color: var(--primary-color);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.footer-btn.active {
+    color: var(--primary-color);
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.footer-btn .label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Responsive Design */
+@media (max-width: 480px) {
+    .vpn-panel {
+        padding: 1rem 0.5rem 0.5rem 0.5rem;
+    }
+    
+    .header {
+        font-size: 2rem;
+        margin: 0.5rem 0 1.5rem 0;
+    }
+    
+    .circle-btn {
+        width: 100px;
+        height: 100px;
+        font-size: 3rem;
+    }
+    
+    .connection-section {
+        margin: 2rem 0;
+    }
+    
+    .input-section {
+        padding: 0 1rem 1rem 1rem;
+    }
+    
+    .menu-section,
+    .configs {
+        margin-left: 0.5rem;
+        margin-right: 0.5rem;
+    }
+    
+    .menu-block {
+        padding: 0.875rem 1rem;
+    }
+    
+    .config-item {
+        font-size: 0.9rem;
+        padding: 0.875rem;
+    }
+    
+    .popup {
+        right: 0.5rem;
+        left: 0.5rem;
+        min-width: auto;
+    }
+}
+
+@media (max-width: 320px) {
+    .header {
+        font-size: 1.75rem;
+    }
+    
+    .circle-btn {
+        width: 70px;
+        height: 70px;
+        font-size: 2rem;
+    }
+    
+    .footer-btn {
+        font-size: 1.25rem;
+        padding: 0.5rem;
+        min-width: 3rem;
+    }
+    
+    .footer-btn .label {
+        font-size: 0.625rem;
+    }
+}
+
+/* Dark theme enhancements */
+@media (prefers-color-scheme: dark) {
+    .vless-input {
+        color-scheme: dark;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .vpn-panel {
+        border: 2px solid var(--text-primary);
+    }
+    
+    .menu-block,
+    .config-item {
+        border: 1px solid var(--text-secondary);
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* Loading state */
+.loading {
+    position: relative;
+    overflow: hidden;
+}
+
+.loading::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}

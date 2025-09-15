@@ -1,9 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
-using NVPN.Cross;
-using NVPN.Native.Services;
-using NVPN.Native.Services.Interfaces;
+using NVPN.Cross.BL.Services;
+using NVPN.Cross.BL.Services.Interfaces;
+using NVPN.Cross.Dal;
 
-namespace NVPN.Native
+
+// using MudBlazor.Services;
+
+namespace NVPN.Cross
 {
     public static class MauiProgram
     {
@@ -19,24 +22,44 @@ namespace NVPN.Native
 
             builder.Services.AddMauiBlazorWebView();
 
+            // Регистрируем DbContext в DI контейнере
+            builder.Services.AddDbContext<VpnDbContext>();
+            
+            // builder.Services.AddMudServices(); // Временно отключено
+
+            builder.Services.AddScoped<IVlessConfigService, VlessConfigService>();
+
+#if WINDOWS
+            builder.Services.AddScoped<IVpnConnectService, Platforms.Windows.WindowsServices.WindowsVpnConnectService>();
+#endif
+#if ANDROID
+            builder.Services.AddScoped<IVpnConnectService, Platforms.Android.Services.AndroidVpnConnectService>();
+#endif
+
 #if DEBUG
             builder.Services.AddBlazorWebViewDeveloperTools();
-            builder.Logging.AddDebug();
+    		builder.Logging.AddDebug();
 #endif
 
-            // Регистрация сервисов
-            RegisterServices(builder.Services);
+            var app = builder.Build();
+            
+            // Инициализируем базу данных после создания приложения
+            Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = app.Services.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<VpnDbContext>();
+                    await dbContext.Database.EnsureCreatedAsync();
+                }
+                catch (Exception ex)
+                {
+                    // Логируем ошибку, но не падаем
+                    System.Diagnostics.Debug.WriteLine($"Database initialization error: {ex.Message}");
+                }
+            });
 
-            return builder.Build();
-        }
-
-        private static void RegisterServices(IServiceCollection services)
-        {
-
-            // Платформо-зависимая регистрация сервиса VPN
-#if ANDROID
-            services.AddSingleton<IVpnService, Platforms.Android.Services.AndroidVpnService>();
-#endif
+            return app;
         }
     }
 }
