@@ -52,9 +52,16 @@
     padding: 0 1.5rem 1rem 1.5rem;
 }
 
+.input-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
 .vless-input {
     width: 100%;
-    padding: 0.875rem 1rem;
+    padding: 0.875rem 3.5rem 0.875rem 1rem;
     border-radius: var(--radius-md);
     border: 2px solid var(--border-color);
     background: var(--surface-light);
@@ -62,7 +69,6 @@
     font-size: 1rem;
     outline: none;
     transition: all 0.3s ease;
-    margin-bottom: 0.75rem;
 }
 
 .vless-input:focus {
@@ -72,6 +78,61 @@
 
 .vless-input::placeholder {
     color: var(--text-muted);
+}
+
+.save-btn {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2.5rem;
+    height: 2.5rem;
+    border: none;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    z-index: 10;
+}
+
+.save-btn:hover:not(:disabled) {
+    transform: translateY(-50%) scale(1.1);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary-color));
+}
+
+.save-btn:active:not(:disabled) {
+    transform: translateY(-50%) scale(0.95);
+}
+
+.save-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: translateY(-50%);
+}
+
+.save-icon {
+    font-size: 1.25rem;
+    transition: all 0.3s ease;
+    display: block;
+}
+
+.save-btn:hover:not(:disabled) .save-icon {
+    transform: rotate(10deg) scale(1.1);
+}
+
+.save-btn.loading .save-icon {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .error-message {
@@ -464,6 +525,15 @@
     
     .input-section {
         padding: 0 1rem 1rem 1rem;
+    }
+    
+    .save-btn {
+        width: 2.25rem;
+        height: 2.25rem;
+    }
+    
+    .save-icon {
+        font-size: 1.125rem;
     }
     
     .menu-section,

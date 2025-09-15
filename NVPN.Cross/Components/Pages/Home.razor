@@ -9,12 +9,16 @@
         <div class="header">@timerDisplay</div>
         
         <div class="input-section">
-            <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
+            <div class="input-container">
+                <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
+                <button class="save-btn @(isBusy ? "loading" : "")" @onclick="SaveConfig" disabled="@isBusy" title="Сохранить конфигурацию">
+                    <span class="save-icon">💾</span>
+                </button>
+            </div>
             @if (!string.IsNullOrEmpty(errorMsg))
             {
                 <div class="error-message">@errorMsg</div>
             }
-            <button class="save-btn" @onclick="SaveConfig" disabled="@isBusy">Сохранить конфигурацию</button>
         </div>
         
         <div class="connection-section">
