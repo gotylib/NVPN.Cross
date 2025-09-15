@@ -73,6 +73,10 @@
                 {
                     <div class="config-item @(selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
                         <span>@profile.Remarks (@profile.Address:@profile.Port)</span>
+                        @if (selectedProfile == profile)
+                        {
+                            <span class="selected-indicator">✓</span>
+                        }
                     </div>
                 }
             }

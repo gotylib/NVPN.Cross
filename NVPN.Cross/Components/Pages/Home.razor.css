@@ -253,6 +253,47 @@
     box-shadow: var(--shadow-lg);
 }
 
+.config-item.selected {
+    background: linear-gradient(135deg, var(--success-color), var(--success-dark));
+    color: white;
+    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.3);
+    border: 2px solid var(--success-color);
+    transform: translateY(-2px);
+}
+
+.config-item.selected:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 35px rgba(16, 185, 129, 0.4);
+}
+
+.selected-indicator {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: bold;
+    margin-left: 0.75rem;
+    animation: checkmark 0.3s ease;
+}
+
+@keyframes checkmark {
+    0% {
+        transform: scale(0);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.2);
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
 .config-item .info-btn {
     background: rgba(255, 255, 255, 0.2);
     border: none;
