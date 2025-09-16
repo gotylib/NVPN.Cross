@@ -1,18 +1,15 @@
 using NVPN.Cross.BL.Services.Interfaces;
-using System;
 using System.Diagnostics;
-using System.IO;
 using System.Text.Json;
 using System.Net.NetworkInformation;
-using System.Linq;
 using NVPN.Cross.Dal.Models;
 
 namespace NVPN.Cross.Platforms.Windows.WindowsServices
 {
     internal class WindowsVpnConnectService : IVpnConnectService
     {
-        private static Process xrayProcess;
-        private static string tempConfigPath;
+        private static Process? _xrayProcess;
+        private static string? _tempConfigPath;
 
         bool IVpnConnectService.Connect(VlessProfile profile, out string errorMsg)
         {
@@ -20,22 +17,21 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
             try
             {
                 // 0. Найти свободный порт, начиная с 10809
-                int startPort = 10809;
-                int maxPort = 10909;
-                int selectedPort = -1;
+                const int startPort = 10809;
+                const int maxPort = 10909;
+                var selectedPort = -1;
                 var ipProps = IPGlobalProperties.GetIPGlobalProperties();
                 var usedPorts = ipProps.GetActiveTcpListeners()
-                    .Where(ep => ep.Port >= startPort && ep.Port <= maxPort)
+                    .Where(ep => ep.Port is >= startPort and <= maxPort)
                     .Select(ep => ep.Port)
                     .ToHashSet();
 
-                for (int port = startPort; port <= maxPort; port++)
+                for (var port = startPort; port <= maxPort; port++)
                 {
-                    if (!usedPorts.Contains(port))
-                    {
-                        selectedPort = port;
-                        break;
-                    }
+                    if (usedPorts.Contains(port)) continue;
+                    
+                    selectedPort = port;
+                    break;
                 }
                 // Если все порты заняты, вернуть ошибку
                 if (selectedPort == -1)
@@ -47,8 +43,8 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                 // 1. Генерируем конфиг
                 var config = VlessProfile.GenerateXrayConfig(profile, selectedPort);
                 var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-                tempConfigPath = Path.Combine(Path.GetTempPath(), $"xray_{Guid.NewGuid()}.json");
-                File.WriteAllText(tempConfigPath, json);
+                _tempConfigPath = Path.Combine(Path.GetTempPath(), $"xray_{Guid.NewGuid()}.json");
+                File.WriteAllText(_tempConfigPath, json);
 
                 // 2. Запускаем xray.exe
                 var xrayExePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Xray", "Windows", "xray.exe");
@@ -61,7 +57,7 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                 {
                     FileName = xrayExePath,
                     // Quote config path to handle spaces in paths
-                    Arguments = $"-c \"{tempConfigPath}\"",
+                    Arguments = $"-c \"{_tempConfigPath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardError = true,
@@ -69,22 +65,22 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                 };
                 try
                 {
-                    xrayProcess = Process.Start(psi);
-                    if (xrayProcess == null || xrayProcess.HasExited)
+                    _xrayProcess = Process.Start(psi) ?? throw new InvalidOperationException();
+                    if (_xrayProcess.HasExited)
                     {
                         // Read any error output for diagnostics
-                        string stdErr = xrayProcess?.StandardError.ReadToEnd() ?? "process not started";
-                        string stdOut = xrayProcess?.StandardOutput.ReadToEnd() ?? "";
+                        var stdErr = _xrayProcess.StandardError.ReadToEnd();
+                        var stdOut = _xrayProcess?.StandardOutput.ReadToEnd() ?? "";
                         errorMsg = $"Не удалось запустить xray.exe\nSTDERR: {stdErr}\nSTDOUT: {stdOut}";
                         return false;
                     }
                     // Optional: small delay to allow background startup
-                    System.Threading.Thread.Sleep(200);
+                    Thread.Sleep(200);
                     // If xray.exe exited immediately, capture error output
-                    if (xrayProcess.HasExited)
+                    if (_xrayProcess.HasExited)
                     {
-                        string stdErrNow = xrayProcess.StandardError.ReadToEnd();
-                        string stdOutNow = xrayProcess.StandardOutput.ReadToEnd();
+                        var stdErrNow = _xrayProcess.StandardError.ReadToEnd();
+                        var stdOutNow = _xrayProcess.StandardOutput.ReadToEnd();
                         errorMsg = $"xray.exe сразу завершился. Попробуйте запустить вручную:\nSTDERR: {stdErrNow}\nSTDOUT: {stdOutNow}";
                         return false;
                     }
@@ -103,8 +99,10 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-                var proc1 = Process.Start(setProxy); proc1.WaitForExit();
-                if (proc1.ExitCode != 0)
+                var proc1 = Process.Start(setProxy); 
+                proc1?.WaitForExit();
+                
+                if (proc1 != null && proc1.ExitCode != 0)
                 {
                     errorMsg = "Ошибка установки ProxyEnable через reg";
                     return false;
@@ -118,8 +116,10 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-                var proc2 = Process.Start(setProxyServer); proc2.WaitForExit();
-                if (proc2.ExitCode != 0)
+                var proc2 = Process.Start(setProxyServer); 
+                proc2?.WaitForExit();
+                
+                if (proc2 != null && proc2.ExitCode != 0)
                 {
                     errorMsg = "Ошибка установки ProxyServer через reg";
                     return false;
@@ -136,8 +136,8 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                         CreateNoWindow = true
                     };
                     var proc3 = Process.Start(syncWinHttp);
-                    proc3.WaitForExit();
-                    if (proc3.ExitCode != 0)
+                    proc3?.WaitForExit();
+                    if (proc3 != null && proc3.ExitCode != 0)
                     {
                         // Warn user but do not abort connection
                         errorMsg = "Предупреждение: не удалось синхронизировать WinHTTP прокси (ExitCode=" + proc3.ExitCode + "). " +
@@ -165,17 +165,17 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
             try
             {
                 // 1. Останавливаем xray
-                if (xrayProcess != null && !xrayProcess.HasExited)
+                if (_xrayProcess is { HasExited: false })
                 {
-                    xrayProcess.Kill();
-                    xrayProcess.Dispose();
-                    xrayProcess = null;
+                    _xrayProcess.Kill();
+                    _xrayProcess.Dispose();
+                    _xrayProcess = null;
                 }
                 // 2. Удаляем временный конфиг
-                if (!string.IsNullOrEmpty(tempConfigPath) && File.Exists(tempConfigPath))
+                if (!string.IsNullOrEmpty(_tempConfigPath) && File.Exists(_tempConfigPath))
                 {
-                    File.Delete(tempConfigPath);
-                    tempConfigPath = null;
+                    File.Delete(_tempConfigPath);
+                    _tempConfigPath = null;
                 }
                 // 3. Сбрасываем системный прокси
                 var disableProxy = new ProcessStartInfo
@@ -185,13 +185,12 @@ namespace NVPN.Cross.Platforms.Windows.WindowsServices
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-                var proc = Process.Start(disableProxy); proc.WaitForExit();
-                if (proc.ExitCode != 0)
-                {
-                    errorMsg = "Ошибка сброса ProxyEnable через reg";
-                    return false;
-                }
-                return true;
+                var proc = Process.Start(disableProxy);
+                proc?.WaitForExit();
+                if (proc is { ExitCode: 0 }) return true;
+                
+                errorMsg = "Ошибка сброса ProxyEnable через reg";
+                return false;
             }
             catch (Exception ex)
             {
