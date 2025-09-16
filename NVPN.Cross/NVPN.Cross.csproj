@@ -82,8 +82,4 @@
         </Content>
     </ItemGroup>
 
-    <ItemGroup>
-      <Folder Include="Resources\Xray\Android\" />
-    </ItemGroup>
-
 </Project>

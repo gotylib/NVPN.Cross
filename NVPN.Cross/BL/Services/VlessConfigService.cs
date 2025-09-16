@@ -11,9 +11,15 @@ namespace NVPN.Cross.BL.Services
 
         public VlessConfigService(VpnDbContext db) => _db = db;
 
-        public async Task<List<VlessProfile>> GetConfigs()
+        public async Task<List<VlessProfile>> GetConfigsAsync()
         {
             return await _db.VlessProfiles.ToListAsync();
+        }
+
+        public async Task DeleteConfigAsync(VlessProfile config)
+        {
+            _db.VlessProfiles.Remove(config);
+            await _db.SaveChangesAsync();
         }
 
         public async Task SaveConfigAsync(string config)

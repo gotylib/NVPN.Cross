@@ -6,25 +6,25 @@
 
 <div class="vpn-container">
     <div class="vpn-panel">
-        <div class="header">@timerDisplay</div>
+        <div class="header">@_timerDisplay</div>
         
         <div class="input-section">
             <div class="input-container">
-                <input @bind="vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
-                <button class="save-btn @(isBusy ? "loading" : "")" @onclick="SaveConfig" disabled="@isBusy" title="Сохранить конфигурацию">
+                <input @bind="_vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
+                <button class="save-btn @(_isBusy ? "loading" : "")" @onclick="SaveConfig" disabled="@_isBusy" title="Сохранить конфигурацию">
                     <span class="save-icon">💾</span>
                 </button>
             </div>
-            @if (!string.IsNullOrEmpty(errorMsg))
+            @if (!string.IsNullOrEmpty(_errorMsg))
             {
-                <div class="error-message">@errorMsg</div>
+                <div class="error-message">@_errorMsg</div>
             }
         </div>
         
         <div class="connection-section">
-            <button class="circle-btn @(isConnected ? "connected" : "disconnected") @(isBusy ? "loading" : "")" 
-                    @onclick="ToggleConnection" disabled="@isBusy">
-                @if (isConnected)
+            <button class="circle-btn @(_isConnected ? "connected" : "disconnected") @(_isBusy ? "loading" : "")" 
+                    @onclick="ToggleConnection" disabled="@_isBusy">
+                @if (_isConnected)
                 {
                     <span style="display: flex; align-items: center; justify-content: center;">⏹</span>
                 }
@@ -33,14 +33,14 @@
                     <span style="display: flex; align-items: center; justify-content: center; margin-left: 3px;">▶</span>
                 }
             </button>
-            <div class="status">@(isConnected ? "Подключено" : "Не подключено")</div>
+            <div class="status">@(_isConnected ? "Подключено" : "Не подключено")</div>
         </div>
 
         <div class="menu-section">
             <div class="menu-block" @onclick='()=>ShowPopup("routes")' style="position: relative;">
                 <span><span class="icon">🔀</span>Маршрутизация</span>
                 <span class="arrow">›</span>
-                @if (showPopup == "routes")
+                @if (_showPopup == "routes")
                 {
                     <div class="popup-backdrop" @onclick="HidePopup">
                         <div class="popup" @onclick:stopPropagation="true">
@@ -55,7 +55,7 @@
             <div class="menu-block" @onclick='()=>ShowPopup("services")' style="position: relative;">
                 <span><span class="icon">⚙️</span>Сервисы</span>
                 <span class="arrow">›</span>
-                @if (showPopup == "services")
+                @if (_showPopup == "services")
                 {
                     <div class="popup-backdrop" @onclick="HidePopup">
                         <div class="popup" @onclick:stopPropagation="true">
@@ -71,22 +71,26 @@
 
         <div class="configs">
             <div class="configs-title">Конфигурации</div>
-            @if (vlessProfiles != null && vlessProfiles.Any())
+            @if (_vlessProfiles.Any())
             {
-                @foreach (var profile in vlessProfiles)
+                @foreach (var profile in _vlessProfiles)
                 {
-                    <div class="config-item @(selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
+                    <div class="config-item @(_selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
                         <span>@profile.Remarks (@profile.Address:@profile.Port)</span>
-                        @if (selectedProfile == profile)
+                        @if (_selectedProfile == profile)
                         {
                             <span class="selected-indicator">✓</span>
+                        }
+                        @if (_selectedProfile != profile)
+                        {
+                            <button class="delete-btn" @onclick="() => DeleteProfile(profile)" title="Удалить конфигурацию"></button>
                         }
                     </div>
                 }
             }
             else
             {
-                <div class="no-configs">Нет сохраненных конфигураций</div>
+                <div class="no-configs"></div>
             }
         </div>
 
@@ -104,140 +108,144 @@
 </div>
 
 @code {
-    private bool isConnected = false;
-    private bool isBusy = false;
-    private string timerDisplay = "00:00:00";
-    private System.Timers.Timer? timer;
-    private int seconds = 0;
-    private string? showPopup = null;
-    private string vlessUrl = string.Empty;
-    private string errorMsg = string.Empty;
-    private List<VlessProfile> vlessProfiles = new();
-    private VlessProfile? selectedProfile;
+    private bool _isConnected;
+    private bool _isBusy;
+    private string _timerDisplay = "00:00:00";
+    private System.Timers.Timer? _timer;
+    private int _seconds;
+    private string? _showPopup;
+    private string _vlessUrl = string.Empty;
+    private string _errorMsg = string.Empty;
+    private List<VlessProfile> _vlessProfiles = [];
+    private VlessProfile? _selectedProfile;
 
     protected override async void OnInitialized()
     {
-        timer = new System.Timers.Timer(1000);
-        timer.Elapsed += (s, e) =>
+        _timer = new System.Timers.Timer(1000);
+        _timer.Elapsed += (s, _) =>
         {
-            if (isConnected)
-            {
-                seconds++;
-                timerDisplay = TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss");
-                InvokeAsync(StateHasChanged);
-            }
+            if (!_isConnected) return;
+                
+            _seconds++;
+            _timerDisplay = TimeSpan.FromSeconds(_seconds).ToString(@"hh\:mm\:ss");
+            InvokeAsync(StateHasChanged);
         };
-        timer.Start();
+        _timer.Start();
 
-        vlessProfiles = await VlessConfigService.GetConfigs();
+        _vlessProfiles = await VlessConfigService.GetConfigsAsync();
     }
 
     private async Task SaveConfig()
     {
-        errorMsg = string.Empty;
-        isBusy = true;
+        _errorMsg = string.Empty;
+        _isBusy = true;
         try
         {
-            if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+            if (string.IsNullOrWhiteSpace(_vlessUrl) || !_vlessUrl.Trim().StartsWith("vless://"))
             {
-                errorMsg = "Введите корректную VLESS ссылку";
+                _errorMsg = "Введите корректную VLESS ссылку";
                 return;
             }
-            await VlessConfigService.SaveConfigAsync(vlessUrl.Trim());
-            vlessProfiles = await VlessConfigService.GetConfigs();
-            vlessUrl = string.Empty;
-            selectedProfile = null;
+            await VlessConfigService.SaveConfigAsync(_vlessUrl.Trim());
+            _vlessProfiles = await VlessConfigService.GetConfigsAsync();
+            _vlessUrl = string.Empty;
+            _selectedProfile = null;
         }
         catch (Exception ex)
         {
-            errorMsg = ex.Message;
+            _errorMsg = ex.Message;
         }
         finally
         {
-            isBusy = false;
+            _isBusy = false;
             StateHasChanged();
         }
     }
 
     private void SelectProfile(VlessProfile profile)
     {
-        selectedProfile = profile;
-        errorMsg = string.Empty;
+        _selectedProfile = profile;
+        _errorMsg = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task DeleteProfile(VlessProfile profile)
+    {
+        await VlessConfigService.DeleteConfigAsync(profile);
+        _vlessProfiles = await VlessConfigService.GetConfigsAsync();
         StateHasChanged();
     }
 
     private async Task ToggleConnection()
     {
         await Task.Yield();
-        errorMsg = string.Empty;
-        isBusy = true;
+        _errorMsg = string.Empty;
+        _isBusy = true;
         try
         {
             VlessProfile profile;
-            if (selectedProfile != null)
+            if (_selectedProfile != null)
             {
-                profile = selectedProfile;
+                profile = _selectedProfile;
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(vlessUrl) || !vlessUrl.Trim().StartsWith("vless://"))
+                if (string.IsNullOrWhiteSpace(_vlessUrl) || !_vlessUrl.Trim().StartsWith("vless://"))
                 {
-                    errorMsg = "Введите корректную VLESS ссылку";
+                    _errorMsg = "Введите корректную VLESS ссылку";
                     return;
                 }
-                profile = VlessProfile.ParseVlessUrl(vlessUrl.Trim());
+                profile = VlessProfile.ParseVlessUrl(_vlessUrl.Trim());
             }
 
-            if (!isConnected)
+            if (!_isConnected)
             {
-                string err;
-                var ok = VpnService.Connect(profile, out err);
+                var ok = VpnService.Connect(profile, out var err);
                 if (ok)
                 {
-                    isConnected = true;
-                    seconds = 0;
-                    timerDisplay = "00:00:00";
+                    _isConnected = true;
+                    _seconds = 0;
+                    _timerDisplay = "00:00:00";
                 }
                 else
                 {
-                    errorMsg = err ?? "Ошибка подключения к VPN";
+                    _errorMsg = err;
                 }
             }
             else
             {
-                string err;
-                var ok = VpnService.Disconnect(profile, out err);
+                var ok = VpnService.Disconnect(profile, out var err);
                 if (ok)
                 {
-                    isConnected = false;
-                    timerDisplay = "00:00:00";
+                    _isConnected = false;
+                    _timerDisplay = "00:00:00";
                 }
                 else
                 {
-                    errorMsg = err ?? "Ошибка отключения VPN";
+                    _errorMsg = err;
                 }
             }
         }
         catch (Exception ex)
         {
-            errorMsg = ex.Message;
+            _errorMsg = ex.Message;
         }
         finally
         {
-            isBusy = false;
+            _isBusy = false;
             StateHasChanged();
         }
     }
 
     private void ShowPopup(string popup)
     {
-        showPopup = popup.Trim();
+        _showPopup = popup.Trim();
         StateHasChanged();
     }
     
     private void HidePopup()
     {
-        showPopup = null;
+        _showPopup = null;
         StateHasChanged();
     }
 }
