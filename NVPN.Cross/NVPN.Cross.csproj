@@ -70,7 +70,7 @@
         <PackageReference Include="MudBlazor" Version="8.9.0" />
     </ItemGroup>
 
-    <ItemGroup>
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
         <Content Include="Resources\Xray\Windows\xray.exe">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
@@ -78,6 +78,21 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
         <Content Include="Resources\Xray\Windows\geosite.dat">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-android'">
+        <AndroidAsset Include="Resources\Xray\Android\xray" />
+        <AndroidAsset Include="Resources\Xray\Android\geoip.dat" />
+        <AndroidAsset Include="Resources\Xray\Android\geosite.dat" />
+        <Content Include="Resources\Xray\Android\xray">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Resources\Xray\Android\geoip.dat">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Resources\Xray\Android\geosite.dat">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
     </ItemGroup>
