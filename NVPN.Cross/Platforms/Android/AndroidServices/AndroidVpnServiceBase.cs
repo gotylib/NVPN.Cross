@@ -1,6 +1,6 @@
 ﻿using Android.App;
 using Android.Content;
-using Android.Content.PM;
+using Android.Runtime;
 using Android.Net;
 using Android.OS;
 using System.Diagnostics;
@@ -49,23 +49,20 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
             var notification = new Notification.Builder(this, "VPN_CHANNEL")
                 .SetContentTitle("MAUI VPN")
                 .SetContentText("VPN service is running")
-                .SetSmallIcon(Resource.Drawable.notification_action_background)
+                .SetSmallIcon(Resource.Drawable.maui_splash_image)
                 .SetCategory(Notification.CategoryService)
                 .SetOngoing(true)
                 .Build();
             
-            if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
-            {
-                // Для Android 10+ используем специальный тип для VPN
-                StartForeground(1, notification, ForegroundService.TypeSpecialUse);
-            }
-            else
-            {
-                StartForeground(1, notification);
-            }
+            // Используем простой StartForeground без указания типа
+            StartForeground(1, notification);
         }
         public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
         {
+            // Диагностика для отладки
+            System.Diagnostics.Debug.WriteLine("=== VPN Service Starting ===");
+            System.Diagnostics.Debug.WriteLine($"Files Directory: {ApplicationContext.FilesDir?.AbsolutePath}");
+            
             // Получаем профиль из Intent
             if (intent?.GetStringExtra("profile") != null)
             {
@@ -78,6 +75,15 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
                 return StartCommandResult.NotSticky;
             }
 
+            // Проверяем разрешения VPN
+            var vpnIntent = VpnService.Prepare(this);
+            if (vpnIntent != null)
+            {
+                System.Diagnostics.Debug.WriteLine("VPN permissions not granted - user needs to grant VPN permission");
+                System.Diagnostics.Debug.WriteLine($"VPN Intent: {vpnIntent}");
+                return StartCommandResult.Sticky;
+            }
+
             // 1. Создаём VPN-интерфейс через Builder
             var builder = new Builder(this);
             builder.SetSession("NVPN")
@@ -86,7 +92,19 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
                    .AddDnsServer("8.8.8.8")
                    .SetMtu(1500);
 
+            System.Diagnostics.Debug.WriteLine("Attempting to establish VPN interface...");
             vpnInterface = builder.Establish();
+            
+            if (vpnInterface == null)
+            {
+                System.Diagnostics.Debug.WriteLine("ERROR: Failed to establish VPN interface - builder.Establish() returned null");
+                return StartCommandResult.Sticky;
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"VPN Interface established successfully: {vpnInterface.FileDescriptor?.Handle}");
+            
+            // Сразу запускаем foreground сервис после создания VPN интерфейса
+            StartForegroundService();
             
             // Найти свободный порт, начиная с 10809
             const int startPort = 10809;
@@ -120,14 +138,28 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
             
             // Пробуем найти xray в разных местах
             var xrayExePath = FindXrayExecutable();
+            System.Diagnostics.Debug.WriteLine($"Selected xray path: {xrayExePath}");
             
             // Проверяем, что xray файл существует или доступен в PATH
-            if (!File.Exists(xrayExePath) && !IsCommandAvailable(xrayExePath))
+            bool xrayExists = File.Exists(xrayExePath);
+            bool xrayAvailable = IsCommandAvailable(xrayExePath);
+            
+            System.Diagnostics.Debug.WriteLine($"Xray file exists: {xrayExists}");
+            System.Diagnostics.Debug.WriteLine($"Xray command available: {xrayAvailable}");
+            
+            if (!xrayExists && !xrayAvailable)
             {
                 System.Diagnostics.Debug.WriteLine($"Cannot find xray executable: {xrayExePath}");
-                // Для тестирования создаем заглушку
                 System.Diagnostics.Debug.WriteLine("Xray not available, VPN service will run without proxy");
                 return StartCommandResult.Sticky;
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"Using xray executable: {xrayExePath}");
+            
+            // Проверяем архитектуру файла перед запуском
+            if (File.Exists(xrayExePath))
+            {
+                IsValidElfFile(xrayExePath);
             }
 
             var psi = new ProcessStartInfo
@@ -149,19 +181,97 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
                     System.Diagnostics.Debug.WriteLine("Failed to start xray process");
                     return StartCommandResult.Sticky;
                 }
+                
+                System.Diagnostics.Debug.WriteLine($"Xray process started successfully with PID: {_xrayProcess.Id}");
             }
-            catch (Exception ex)
+            catch (Exception exс)
             {
-                System.Diagnostics.Debug.WriteLine($"Error starting xray: {ex.Message}");
-                return StartCommandResult.Sticky;
+                System.Diagnostics.Debug.WriteLine($"Error starting xray: {exс.Message}");
+                
+                // Попробуем альтернативный способ через shell
+                System.Diagnostics.Debug.WriteLine("Trying alternative method through shell");
+                try
+                {
+                    System.Diagnostics.Debug.WriteLine($"Attempting to start xray: {xrayExePath}");
+                        
+                    // Проверяем права еще раз
+                    var xrayFile = new Java.IO.File(xrayExePath);
+                    if (!xrayFile.CanExecute())
+                    {
+                        System.Diagnostics.Debug.WriteLine("Xray is not executable, trying to fix permissions");
+                        SetExecutablePermissions(xrayExePath);
+                    }
+                        
+                    // Запускаем через shell с явным указанием рабочей директории
+                    var shellPsi = new ProcessStartInfo
+                    {
+                        FileName = "/system/bin/sh",
+                        Arguments = $"-c \"cd '{ApplicationContext.FilesDir?.AbsolutePath}' && chmod 755 '{xrayExePath}' && '{xrayExePath}' -c '{_tempConfigPath}'\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardInput = true
+                    };
+                        
+                    _xrayProcess = Process.Start(shellPsi);
+                    if (_xrayProcess == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine("Failed to start xray process via shell");
+                        return StartCommandResult.Sticky;
+                    }
+                        
+                    // Ждем немного и проверяем статус
+                    Thread.Sleep(3000);
+                        
+                    if (_xrayProcess.HasExited)
+                    {
+                        var error = _xrayProcess.StandardError.ReadToEnd();
+                        var output = _xrayProcess.StandardOutput.ReadToEnd();
+                        System.Diagnostics.Debug.WriteLine($"Xray process exited immediately. Exit code: {_xrayProcess.ExitCode}");
+                        System.Diagnostics.Debug.WriteLine($"Xray stderr: {error}");
+                        System.Diagnostics.Debug.WriteLine($"Xray stdout: {output}");
+                        return StartCommandResult.Sticky;
+                    }
+                        
+                    System.Diagnostics.Debug.WriteLine($"Xray process started successfully with PID: {_xrayProcess.Id}");
+                        
+                    // Запускаем мониторинг вывода xray в отдельном потоке
+                    new Thread(() =>
+                        {
+                            try
+                            {
+                                while (!_xrayProcess.HasExited && _isRunning)
+                                {
+                                    var line = _xrayProcess.StandardOutput.ReadLine();
+                                    if (!string.IsNullOrEmpty(line))
+                                        System.Diagnostics.Debug.WriteLine($"Xray: {line}");
+                                    
+                                    var errorLine = _xrayProcess.StandardError.ReadLine();
+                                    if (!string.IsNullOrEmpty(errorLine))
+                                        System.Diagnostics.Debug.WriteLine($"Xray ERROR: {errorLine}");
+                                    
+                                    Thread.Sleep(100);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Xray monitor error: {ex.Message}");
+                            }
+                        })
+                        { IsBackground = true }.Start();
+                        
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error starting xray: {ex.Message}");
+                    return StartCommandResult.Sticky;
+                }
             }
             
 
             // Запускаем xray для SOCKS прокси
             _isRunning = true;
-
-            // Запускаем foreground сервис
-            StartForegroundService();
 
             // Запускаем поток для обработки VPN трафика
             _vpnThread = new Thread(ProcessVpnTraffic)
@@ -202,44 +312,162 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
 
         private void ProcessVpnTraffic()
         {
-            if (vpnInterface == null || _profile == null) return;
-
             try
             {
-                using var inputStream = new FileStream(vpnInterface.FileDescriptor.Handle, FileAccess.ReadWrite);
-                var buffer = new byte[4096];
-                var socksClient = new SocksClient("127.0.0.1", 10809); // xray SOCKS порт
-
+                using var vpnFile = new Java.IO.FileInputStream(vpnInterface.FileDescriptor);
+                using var vpnChannel = vpnFile.Channel;
+        
+                var socksClient = new SocksClient("127.0.0.1", 10809);
+                var buffer = Java.Nio.ByteBuffer.Allocate(32767);
+        
                 while (_isRunning)
                 {
                     try
                     {
-                        // Читаем данные из VPN интерфейса
-                        var bytesRead = inputStream.Read(buffer, 0, buffer.Length);
+                        buffer.Clear();
+                        var bytesRead = vpnChannel.Read(buffer);
+                
                         if (bytesRead > 0)
                         {
-                            // Анализируем IP пакет
-                            if (IsValidIpPacket(buffer, bytesRead))
+                            buffer.Flip();
+                            var data = new byte[buffer.Remaining()];
+                            buffer.Get(data);
+                    
+                            // Проксируем через SOCKS
+                            var proxiedData = socksClient.ProxyData(data, data.Length);
+                    
+                            if (proxiedData != null && proxiedData.Length > 0)
                             {
-                                // Проксируем через SOCKS
-                                var proxiedData = socksClient.ProxyData(buffer, bytesRead);
-                                if (proxiedData != null && proxiedData.Length > 0)
+                                var outputBuffer = Java.Nio.ByteBuffer.Wrap(proxiedData);
+                                while (outputBuffer.HasRemaining)
                                 {
-                                    inputStream.Write(proxiedData, 0, proxiedData.Length);
+                                    vpnChannel.Write(outputBuffer);
                                 }
                             }
+                        }
+                        else
+                        {
+                            Thread.Sleep(10);
                         }
                     }
                     catch (Exception ex)
                     {
                         System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
-                        break;
+                        if (!_isRunning) break;
                     }
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"VPN Process Error: {ex.Message}");
+            }
+        }
+
+        private void ProcessVpnTrafficWithStreams(FileStream inputStream, FileStream outputStream, SocksClient socksClient)
+        {
+            var buffer = new byte[4096];
+            
+            System.Diagnostics.Debug.WriteLine("SOCKS client created for 127.0.0.1:10809");
+            System.Diagnostics.Debug.WriteLine("Starting VPN traffic processing loop...");
+
+            while (_isRunning)
+            {
+                try
+                {
+                    // Читаем данные из VPN интерфейса
+                    var bytesRead = inputStream.Read(buffer, 0, buffer.Length);
+                    if (bytesRead > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"VPN: Received {bytesRead} bytes from interface");
+                        
+                        // Анализируем IP пакет
+                        if (IsValidIpPacket(buffer, bytesRead))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"VPN: Valid IP packet detected, proxying through SOCKS");
+                            
+                            // Проксируем через SOCKS
+                            var proxiedData = socksClient.ProxyData(buffer, bytesRead);
+                            if (proxiedData != null && proxiedData.Length > 0)
+                            {
+                                outputStream.Write(proxiedData, 0, proxiedData.Length);
+                                outputStream.Flush();
+                                System.Diagnostics.Debug.WriteLine($"VPN: Sent {proxiedData.Length} bytes back to interface");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("VPN: SOCKS proxy returned no data");
+                            }
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine("VPN: Invalid IP packet received");
+                        }
+                    }
+                    else
+                    {
+                        // Небольшая задержка если нет данных
+                        Thread.Sleep(10);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
+                    break;
+                }
+            }
+        }
+
+        private void ProcessVpnTrafficWithSingleStream(FileStream vpnStream, SocksClient socksClient)
+        {
+            var buffer = new byte[4096];
+            
+            System.Diagnostics.Debug.WriteLine("SOCKS client created for 127.0.0.1:10809");
+            System.Diagnostics.Debug.WriteLine("Starting VPN traffic processing loop (single stream)...");
+
+            while (_isRunning)
+            {
+                try
+                {
+                    // Читаем данные из VPN интерфейса
+                    var bytesRead = vpnStream.Read(buffer, 0, buffer.Length);
+                    if (bytesRead > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"VPN: Received {bytesRead} bytes from interface");
+                        
+                        // Анализируем IP пакет
+                        if (IsValidIpPacket(buffer, bytesRead))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"VPN: Valid IP packet detected, proxying through SOCKS");
+                            
+                            // Проксируем через SOCKS
+                            var proxiedData = socksClient.ProxyData(buffer, bytesRead);
+                            if (proxiedData != null && proxiedData.Length > 0)
+                            {
+                                vpnStream.Write(proxiedData, 0, proxiedData.Length);
+                                vpnStream.Flush();
+                                System.Diagnostics.Debug.WriteLine($"VPN: Sent {proxiedData.Length} bytes back to interface");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("VPN: SOCKS proxy returned no data");
+                            }
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine("VPN: Invalid IP packet received");
+                        }
+                    }
+                    else
+                    {
+                        // Небольшая задержка если нет данных
+                        Thread.Sleep(10);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
+                    break;
+                }
             }
         }
 
@@ -254,17 +482,30 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
 
         private string FindXrayExecutable()
         {
-            // Список возможных путей к xray для Android
+            // Сначала пробуем найти уже извлеченный xray
+            var extractedXrayPath = Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray");
+            if (File.Exists(extractedXrayPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"Found extracted xray at: {extractedXrayPath}");
+                return extractedXrayPath;
+            }
+            
+            // Если не найден, пытаемся извлечь из APK
+            var extractedPath = ExtractXrayFromAssets();
+            if (!string.IsNullOrEmpty(extractedPath) && File.Exists(extractedPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"Successfully extracted xray to: {extractedPath}");
+                return extractedPath;
+            }
+            
+            // Fallback: поиск в других местах
             var possiblePaths = new[]
             {
-                // Основной путь в output directory
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Xray", "Android", "xray"),
-                // Альтернативные пути
                 Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray"),
                 Path.Combine(ApplicationContext.PackageCodePath ?? "", "xray"),
-                // Прямой путь к файлу в сборке
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "xray"),
-                "xray" // Попробуем найти в PATH
+                "xray"
             };
 
             foreach (var path in possiblePaths)
@@ -278,8 +519,264 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
             }
 
             System.Diagnostics.Debug.WriteLine("Xray not found in any of the expected locations");
-            // Если не нашли, возвращаем последний вариант (для поиска в PATH)
             return "xray";
+        }
+
+        private string ExtractXrayFromAssets()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("Attempting to extract xray from APK assets");
+                
+                var outputPath = Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray");
+                
+                // Удаляем старый файл если существует
+                if (File.Exists(outputPath))
+                {
+                    try { File.Delete(outputPath); }
+                    catch { /* ignored */ }
+                }
+                
+                // Проверяем, что папка существует
+                var outputDir = Path.GetDirectoryName(outputPath);
+                if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
+                {
+                    Directory.CreateDirectory(outputDir);
+                }
+                
+                // Список возможных путей в assets
+                var assetPaths = new[]
+                {
+                    "Xray/Android/xray",
+                    "xray/Android/xray", 
+                    "xray",
+                    "Resources/Xray/Android/xray",
+                    "Resources/xray/Android/xray"
+                };
+                
+                foreach (var assetPath in assetPaths)
+                {
+                    try
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Trying asset path: {assetPath}");
+                        
+                        using var inputStream = Assets.Open(assetPath);
+                        if (inputStream != null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Found xray in assets at {assetPath}, extracting to: {outputPath}");
+                            
+                            using (var outputStream = File.Create(outputPath))
+                            {
+                                inputStream.CopyTo(outputStream);
+                                outputStream.Flush();
+                            }
+                            
+                            // Даем время файлу записаться
+                            Thread.Sleep(200);
+                            
+                            var fileInfo = new FileInfo(outputPath);
+                            System.Diagnostics.Debug.WriteLine($"Successfully extracted xray ({fileInfo.Length} bytes)");
+                            
+                            if (fileInfo.Length > 0)
+                            {
+                                // Устанавливаем права на выполнение
+                                if (SetExecutablePermissions(outputPath))
+                                {
+                                    // Проверяем, что файл действительно исполняемый
+                                    if (IsValidElfFile(outputPath))
+                                    {
+                                        return outputPath;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Error trying asset path {assetPath}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error extracting xray from assets: {ex.Message}");
+            }
+            
+            return string.Empty;
+        }
+
+        private bool IsValidElfFile(string filePath)
+        {
+            try
+            {
+                using var fs = File.OpenRead(filePath);
+                var buffer = new byte[24]; // Читаем больше байт для полного заголовка
+                var bytesRead = fs.Read(buffer, 0, 24);
+                
+                if (bytesRead < 16)
+                {
+                    System.Diagnostics.Debug.WriteLine($"File too small for ELF header: {bytesRead} bytes");
+                    return false;
+                }
+                
+                // Проверяем ELF magic
+                if (buffer[0] != 0x7F || buffer[1] != 0x45 || buffer[2] != 0x4C || buffer[3] != 0x46)
+                {
+                    System.Diagnostics.Debug.WriteLine("File does not have ELF magic header");
+                    return false;
+                }
+                
+                // Проверяем архитектуру (5-й байт: 1 = 32-bit, 2 = 64-bit)
+                var is64bit = buffer[4] == 2;
+                System.Diagnostics.Debug.WriteLine($"ELF file is {(is64bit ? "64-bit" : "32-bit")}");
+                
+                // Проверяем архитектуру
+                // В 32-bit ELF: machine находится в байте 18
+                // В 64-bit ELF: machine находится в байте 18
+                byte machine;
+                if (bytesRead >= 19)
+                {
+                    machine = buffer[18];
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("File too small to read machine architecture");
+                    return false;
+                }
+                
+                string arch = machine switch
+                {
+                    0x28 => "ARM",
+                    0x3E => "x86_64", 
+                    0xB7 => "AArch64",
+                    _ => $"Unknown (0x{machine:X2})"
+                };
+                
+                System.Diagnostics.Debug.WriteLine($"ELF file architecture: {arch}");
+                
+                // Проверяем совместимость архитектуры
+                if (machine == 0x3E) // x86_64
+                {
+                    System.Diagnostics.Debug.WriteLine("ELF file is compatible with x86_64 emulator");
+                    return true;
+                }
+                else if (machine == 0xB7) // AArch64
+                {
+                    System.Diagnostics.Debug.WriteLine($"ELF file architecture {arch} - will try to run anyway");
+                    return true; // Пробуем запустить даже если архитектура не совпадает
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"ELF file architecture {arch} - unknown compatibility");
+                    return true; // Пробуем запустить
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error checking ELF file: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool SetExecutablePermissions(string filePath)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"Setting executable permissions for: {filePath}");
+                
+                // Метод 1: Через Runtime с проверкой результата
+                try
+                {
+                    var process = Java.Lang.Runtime.GetRuntime().Exec(new[] { "chmod", "755", filePath });
+                    process.WaitFor(); // Ждем завершения
+                    
+                    var exitCode = process.ExitValue();
+                    if (exitCode == 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Successfully set permissions via Runtime: {filePath}");
+                        
+                        // Проверяем, что права установились
+                        var file = new Java.IO.File(filePath);
+                        if (file.CanExecute())
+                        {
+                            System.Diagnostics.Debug.WriteLine("File is now executable");
+                            return true;
+                        }
+                    }
+                    System.Diagnostics.Debug.WriteLine($"Runtime chmod failed with exit code: {exitCode}");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Runtime chmod failed: {ex.Message}");
+                }
+                
+                // Метод 2: Попробуем через Process с полным путем к chmod
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "/system/bin/chmod",
+                        Arguments = $"755 \"{filePath}\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+                    
+                    using var process = Process.Start(psi);
+                    if (process != null)
+                    {
+                        process.WaitForExit(5000);
+                        if (process.ExitCode == 0)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Successfully set permissions via Process: {filePath}");
+                            return true;
+                        }
+                        else
+                        {
+                            var error = process.StandardError.ReadToEnd();
+                            System.Diagnostics.Debug.WriteLine($"Process chmod failed: {error}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Process chmod failed: {ex.Message}");
+                }
+                
+                // Метод 3: Попробуем скопировать и установить права по-другому
+                try
+                {
+                    var tempPath = Path.Combine(Path.GetTempPath(), "xray_temp");
+                    if (File.Exists(tempPath)) File.Delete(tempPath);
+                    
+                    File.Copy(filePath, tempPath);
+                    File.Delete(filePath);
+                    File.Move(tempPath, filePath);
+                    
+                    // Еще одна попытка
+                    Java.Lang.Runtime.GetRuntime().Exec(new[] { "chmod", "700", filePath }).WaitFor();
+                    
+                    var file = new Java.IO.File(filePath);
+                    if (file.CanExecute())
+                    {
+                        System.Diagnostics.Debug.WriteLine("File is executable after copy method");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Copy method failed: {ex.Message}");
+                }
+                
+                System.Diagnostics.Debug.WriteLine("All permission setting methods failed");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error setting executable permissions: {ex.Message}");
+                return false;
+            }
         }
 
         private bool IsCommandAvailable(string command)
