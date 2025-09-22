@@ -1,5 +1,6 @@
 ﻿using Android.App;
 using Android.Content;
+using Android.Net;
 using Android.OS;
 using NVPN.Cross.BL.Services.Interfaces;
 using NVPN.Cross.Dal.Models;
@@ -21,6 +22,18 @@ namespace NVPN.Cross.Platforms.Android.Services
                 if (_isConnected)
                 {
                     errorMsg = "VPN уже подключен";
+                    return false;
+                }
+
+                // Проверяем VPN разрешения
+                var vpnIntent = VpnService.Prepare(Platform.CurrentActivity);
+                if (vpnIntent != null)
+                {
+                    // Нужно запросить разрешение VPN
+                    errorMsg = "Требуется разрешение VPN. Нажмите кнопку подключения еще раз для запроса разрешения.";
+                    
+                    // Запускаем Activity для запроса разрешения
+                    Platform.CurrentActivity?.StartActivityForResult(vpnIntent, 1);
                     return false;
                 }
 
