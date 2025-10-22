@@ -1,0 +1,21 @@
+<MudMenu Icon="@Icons.Material.Filled.Add"
+         Color="Color.Primary"
+         Variant="Variant.Text"
+         AnchorOrigin="Origin.BottomLeft"
+         TransformOrigin="Origin.TopLeft"
+         OffsetY="8"
+         Dense="true"
+         Class="@CssClass">
+    <MudMenuItem Icon="@Icons.Material.Filled.ContentCopy"
+                 Label="Импорт из буфера обмена"
+                 OnClick="OnImportFromClipboard" />
+    <MudMenuItem Icon="@Icons.Material.Filled.BorderColor"
+                 Label="Ввести вручную"
+                 OnClick="OnManualInput" />
+</MudMenu>
+
+@code {
+    [Parameter] public EventCallback OnImportFromClipboard { get; set; }
+    [Parameter] public EventCallback OnManualInput { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+}

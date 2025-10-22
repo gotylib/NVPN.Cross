@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
+using Microsoft.Maui.LifecycleEvents;
+using MudBlazor.Services;
 using NVPN.Cross.BL.Services;
 using NVPN.Cross.BL.Services.Interfaces;
 using NVPN.Cross.Dal;
@@ -21,6 +23,10 @@ namespace NVPN.Cross
                 });
 
             builder.Services.AddMauiBlazorWebView();
+
+            builder.Services.AddMudServices();
+
+           
 
             // Регистрируем DbContext в DI контейнере
             builder.Services.AddDbContext<VpnDbContext>();

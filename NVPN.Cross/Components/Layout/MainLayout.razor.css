@@ -6,6 +6,14 @@
 
 main {
     flex: 1;
+    position: relative;
+}
+
+.layout-menu-anchor {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 1300;
 }
 
 .sidebar {

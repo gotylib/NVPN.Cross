@@ -1,0 +1,16 @@
+/* Убираем все тени из диалога */
+::deep .mud-dialog {
+    box-shadow: none !important;
+}
+
+::deep .mud-dialog .mud-paper {
+    box-shadow: none !important;
+}
+
+::deep .mud-dialog-container {
+    box-shadow: none !important;
+}
+
+::deep .mud-overlay-dialog {
+    box-shadow: none !important;
+}

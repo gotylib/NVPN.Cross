@@ -1,240 +1,260 @@
-﻿@page "/"
+@page "/"
+@using NVPN.Cross.Components.UI
 @using NVPN.Cross.Dal.Models
-
 @inject NVPN.Cross.BL.Services.Interfaces.IVpnConnectService VpnService
 @inject NVPN.Cross.BL.Services.Interfaces.IVlessConfigService VlessConfigService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JSRuntime
 
-<div class="vpn-container">
-    <div class="vpn-panel">
-        <div class="header">@_timerDisplay</div>
-        
-        <div class="input-section">
-            <div class="input-container">
-                <input @bind="_vlessUrl" placeholder="Вставьте VLESS ссылку..." class="vless-input" />
-                <button class="save-btn @(_isBusy ? "loading" : "")" @onclick="SaveConfig" disabled="@_isBusy" title="Сохранить конфигурацию">
-                    <span class="save-icon">💾</span>
-                </button>
-            </div>
-            @if (!string.IsNullOrEmpty(_errorMsg))
-            {
-                <div class="error-message">@_errorMsg</div>
-            }
-        </div>
-        
-        <div class="connection-section">
-            <button class="circle-btn @(_isConnected ? "connected" : "disconnected") @(_isBusy ? "loading" : "")" 
-                    @onclick="ToggleConnection" disabled="@_isBusy">
-                @if (_isConnected)
-                {
-                    <span style="display: flex; align-items: center; justify-content: center;">⏹</span>
-                }
-                else
-                {
-                    <span style="display: flex; align-items: center; justify-content: center; margin-left: 3px;">▶</span>
-                }
-            </button>
-            <div class="status">@(_isConnected ? "Подключено" : "Не подключено")</div>
-        </div>
-
-        <div class="menu-section">
-            <div class="menu-block" @onclick='()=>ShowPopup("routes")' style="position: relative;">
-                <span><span class="icon">🔀</span>Маршрутизация</span>
-                <span class="arrow">›</span>
-                @if (_showPopup == "routes")
-                {
-                    <div class="popup-backdrop" @onclick="HidePopup">
-                        <div class="popup" @onclick:stopPropagation="true">
-                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
-                            <b>Маршрутизация</b><br />
-                            Настройка правил маршрутизации трафика через VPN.<br />
-                            <small>• Весь трафик<br />• Только определенные сайты<br />• Исключения для локальных ресурсов</small>
-                        </div>
-                    </div>
-                }
-            </div>
-            <div class="menu-block" @onclick='()=>ShowPopup("services")' style="position: relative;">
-                <span><span class="icon">⚙️</span>Сервисы</span>
-                <span class="arrow">›</span>
-                @if (_showPopup == "services")
-                {
-                    <div class="popup-backdrop" @onclick="HidePopup">
-                        <div class="popup" @onclick:stopPropagation="true">
-                            <span class="close" @onclick="HidePopup" @onclick:stopPropagation="true">✕</span>
-                            <b>Сервисы</b><br />
-                            Управление системными сервисами VPN.<br />
-                            <small>• Автозапуск<br />• Защита от утечек DNS<br />• Kill Switch</small>
-                        </div>
-                    </div>
-                }
-            </div>
-        </div>
-
-        <div class="configs">
-            <div class="configs-title">Конфигурации</div>
-            @if (_vlessProfiles.Any())
-            {
-                @foreach (var profile in _vlessProfiles)
-                {
-                    <div class="config-item @(_selectedProfile == profile ? "selected" : "")" @onclick="() => SelectProfile(profile)">
-                        <span>@profile.Remarks (@profile.Address:@profile.Port)</span>
-                        @if (_selectedProfile == profile)
-                        {
-                            <span class="selected-indicator">✓</span>
-                        }
-                        @if (_selectedProfile != profile)
-                        {
-                            <button class="delete-btn" @onclick="() => DeleteProfile(profile)" title="Удалить конфигурацию"></button>
-                        }
-                    </div>
-                }
-            }
-            else
-            {
-                <div class="no-configs"></div>
-            }
-        </div>
-    </div>
+<!-- Кнопка в левом верхнем углу страницы -->
+<div class="home-add-button">
+    <AddMenu OnImportFromClipboard="OnImportFromClipboard" OnManualInput="OnManualInput" />
 </div>
+
+<MudGrid Justify="Justify.Center" Spacing="4" Class="mt-4">
+   
+    <!-- Таймер VPN -->
+    <MudItem xs="12" Class="d-flex justify-center">
+        <VpnTimer IsConnected="@_isConnected" ConnectedAt="@_connectedAt" />
+    </MudItem>
+
+    <!-- Кнопка подключения VPN -->
+    <MudItem xs="12" Class="d-flex justify-center align-center flex-column">
+        <MudTooltip Text="@(_isLoading ? "Подключение…" : _isConnected ? "Отключить VPN" : "Подключить VPN")" Placement="Placement.Top">
+            <button type="button"
+                    class="vpn-toggle @(_isConnected ? "connected" : "") @(_isLoading ? "loading" : "")"
+                    disabled="@_isLoading"
+                    @onclick="ToggleVpn">
+                    @if (_isLoading)
+                    {
+                        <span class="vpn-spinner"></span>
+                    }
+                    else if (_isConnected)
+                    {
+                        <svg class="vpn-icon-svg vpn-icon-pause" viewBox="3360 2100 720 930" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M 3665.28125 2209.28125 C 3665.28125 2182.761719 3654.75 2157.320312 3635.988281 2138.570312 C 3617.238281 2119.808594 3591.800781 2109.28125 3565.28125 2109.28125 C 3533.429688 2109.28125 3498.210938 2109.28125 3466.359375 2109.28125 C 3439.839844 2109.28125 3414.398438 2119.808594 3395.648438 2138.570312 C 3376.890625 2157.320312 3366.359375 2182.761719 3366.359375 2209.28125 C 3366.359375 2386.140625 3366.359375 2752.101562 3366.359375 2928.960938 C 3366.359375 2955.480469 3376.890625 2980.910156 3395.648438 2999.671875 C 3414.398438 3018.421875 3439.839844 3028.949219 3466.359375 3028.949219 C 3498.210938 3028.949219 3533.429688 3028.949219 3565.28125 3028.949219 C 3591.800781 3028.949219 3617.238281 3018.421875 3635.988281 2999.671875 C 3654.75 2980.910156 3665.28125 2955.480469 3665.28125 2928.960938 C 3665.28125 2752.101562 3665.28125 2386.140625 3665.28125 2209.28125 "/>
+                            <path fill-rule="evenodd" d="M 4076.699219 2209.28125 C 4076.699219 2182.761719 4066.160156 2157.320312 4047.410156 2138.570312 C 4028.648438 2119.808594 4003.21875 2109.28125 3976.699219 2109.28125 C 3944.851562 2109.28125 3909.621094 2109.28125 3877.78125 2109.28125 C 3851.25 2109.28125 3825.820312 2119.808594 3807.058594 2138.570312 C 3788.308594 2157.320312 3777.78125 2182.761719 3777.78125 2209.28125 C 3777.78125 2386.140625 3777.78125 2752.101562 3777.78125 2928.960938 C 3777.78125 2955.480469 3788.308594 2980.910156 3807.058594 2999.671875 C 3825.820312 3018.421875 3851.25 3028.949219 3877.78125 3028.949219 C 3909.621094 3028.949219 3944.851562 3028.949219 3976.699219 3028.949219 C 4003.21875 3028.949219 4028.648438 3018.421875 4047.410156 2999.671875 C 4066.160156 2980.910156 4076.699219 2955.480469 4076.699219 2928.960938 C 4076.699219 2752.101562 4076.699219 2386.140625 4076.699219 2209.28125 "/>
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg class="vpn-icon-svg vpn-icon-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 3V12M18.3611 5.64001C19.6195 6.8988 20.4764 8.50246 20.8234 10.2482C21.1704 11.994 20.992 13.8034 20.3107 15.4478C19.6295 17.0921 18.4759 18.4976 16.9959 19.4864C15.5159 20.4752 13.776 21.0029 11.9961 21.0029C10.2162 21.0029 8.47625 20.4752 6.99627 19.4864C5.51629 18.4976 4.36274 17.0921 3.68146 15.4478C3.00019 13.8034 2.82179 11.994 3.16882 10.2482C3.51584 8.50246 4.37272 6.8988 5.6311 5.64001" />
+                        </svg>
+                    }
+            </button>
+        </MudTooltip>
+    </MudItem>
+
+    <!-- Статус подключения -->
+    <MudItem xs="12" Class="d-flex justify-center">
+        <MudChip T="string" Size="Size.Large" Variant="Variant.Text" Color="Color.Default">@(_isLoading ? "Подключение…" : _isConnected ? "Подключено" : "Не подключено")</MudChip>
+    </MudItem>
+
+    <!-- Список профилей -->
+    <MudItem xs="12" md="10" lg="8" xl="6">
+        <NVPN.Cross.Components.UI.ProfileList Profiles="@_profiles"
+                     SelectedProfile="@_selectedProfile"
+                     OnProfileSelect="OnProfileSelected" />
+    </MudItem>
+</MudGrid>
+
 
 @code {
     private bool _isConnected;
-    private bool _isBusy;
-    private string _timerDisplay = "00:00:00";
-    private System.Timers.Timer? _timer;
-    private int _seconds;
-    private string? _showPopup;
-    private string _vlessUrl = string.Empty;
-    private string _errorMsg = string.Empty;
-    private List<VlessProfile> _vlessProfiles = [];
+    private bool _isLoading;
+    private VlessProfile? _connectedProfile;
     private VlessProfile? _selectedProfile;
+    private List<VlessProfile> _profiles = new();
+    private DateTime? _connectedAt;
+    private bool _open = false;
 
-    protected override async void OnInitialized()
+    private void ToggleDrawer()
     {
-        _timer = new System.Timers.Timer(1000);
-        _timer.Elapsed += (s, _) =>
-        {
-            if (!_isConnected) return;
-                
-            _seconds++;
-            _timerDisplay = TimeSpan.FromSeconds(_seconds).ToString(@"hh\:mm\:ss");
-            InvokeAsync(StateHasChanged);
-        };
-        _timer.Start();
-
-        _vlessProfiles = await VlessConfigService.GetConfigsAsync();
+        _open = !_open;
     }
 
-    private async Task SaveConfig()
-    {
-        _errorMsg = string.Empty;
-        _isBusy = true;
-        try
-        {
-            if (string.IsNullOrWhiteSpace(_vlessUrl) || !_vlessUrl.Trim().StartsWith("vless://"))
-            {
-                _errorMsg = "Введите корректную VLESS ссылку";
-                return;
-            }
-            await VlessConfigService.SaveConfigAsync(_vlessUrl.Trim());
-            _vlessProfiles = await VlessConfigService.GetConfigsAsync();
-            _vlessUrl = string.Empty;
-            _selectedProfile = null;
-        }
-        catch (Exception ex)
-        {
-            _errorMsg = ex.Message;
-        }
-        finally
-        {
-            _isBusy = false;
-            StateHasChanged();
-        }
-    }
-
-    private void SelectProfile(VlessProfile profile)
+    private async Task OnProfileSelected(VlessProfile profile)
     {
         _selectedProfile = profile;
-        _errorMsg = string.Empty;
         StateHasChanged();
     }
 
-    private async Task DeleteProfile(VlessProfile profile)
+    private async Task OnImportFromClipboard()
     {
-        await VlessConfigService.DeleteConfigAsync(profile);
-        _vlessProfiles = await VlessConfigService.GetConfigsAsync();
-        StateHasChanged();
-    }
-
-    private async Task ToggleConnection()
-    {
-        await Task.Yield();
-        _errorMsg = string.Empty;
-        _isBusy = true;
         try
         {
-            VlessProfile profile;
-            if (_selectedProfile != null)
+            // Получаем текст из буфера обмена через JSInterop
+            var clipboardText = await JSRuntime.InvokeAsync<string>("navigator.clipboard.readText");
+            
+            if (string.IsNullOrWhiteSpace(clipboardText))
             {
-                profile = _selectedProfile;
-            }
-            else
-            {
-                if (string.IsNullOrWhiteSpace(_vlessUrl) || !_vlessUrl.Trim().StartsWith("vless://"))
-                {
-                    _errorMsg = "Введите корректную VLESS ссылку";
-                    return;
-                }
-                profile = VlessProfile.ParseVlessUrl(_vlessUrl.Trim());
+                Snackbar.Add("Буфер обмена пуст", Severity.Warning);
+                return;
             }
 
-            if (!_isConnected)
+            // Проверяем, что это vless:// URL
+            if (!clipboardText.Trim().StartsWith("vless://", StringComparison.OrdinalIgnoreCase))
             {
-                var ok = VpnService.Connect(profile, out var err);
-                if (ok)
-                {
-                    _isConnected = true;
-                    _seconds = 0;
-                    _timerDisplay = "00:00:00";
-                }
-                else
-                {
-                    _errorMsg = err;
-                }
+                Snackbar.Add("В буфере обмена нет vless:// ссылки", Severity.Warning);
+                return;
             }
-            else
-            {
-                var ok = VpnService.Disconnect(profile, out var err);
-                if (ok)
-                {
-                    _isConnected = false;
-                    _timerDisplay = "00:00:00";
-                }
-                else
-                {
-                    _errorMsg = err;
-                }
-            }
+
+            // Сохраняем конфигурацию
+            await VlessConfigService.SaveConfigAsync(clipboardText.Trim());
+            _profiles = await VlessConfigService.GetConfigsAsync();
+            
+            Snackbar.Add("Конфигурация импортирована из буфера обмена", Severity.Success);
+            StateHasChanged();
         }
         catch (Exception ex)
         {
-            _errorMsg = ex.Message;
-        }
-        finally
-        {
-            _isBusy = false;
-            StateHasChanged();
+            // Обрабатываем ошибки доступа к буферу обмена или парсинга
+            var errorMessage = ex is Microsoft.JSInterop.JSException 
+                ? $"Ошибка доступа к буферу обмена: {ex.Message}" 
+                : $"Ошибка импорта: {ex.Message}";
+            Snackbar.Add(errorMessage, Severity.Error);
         }
     }
 
-    private void ShowPopup(string popup)
+    private async Task OnManualInput()
     {
-        _showPopup = popup.Trim();
+        var parameters = new DialogParameters
+        {
+            ["OnSave"] = new EventCallback<string>(this, OnSaveConfig)
+        };
+
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            BackdropClick = true,
+            CloseButton = true
+        };
+
+        await DialogService.ShowAsync<ManualInputDialog>("Ввести конфигурацию вручную", parameters, options);
+    }
+
+    private async Task OnSaveConfig(string configText)
+    {
+        if (string.IsNullOrWhiteSpace(configText))
+        {
+            Snackbar.Add("Конфигурация не может быть пустой", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            await VlessConfigService.SaveConfigAsync(configText);
+            _profiles = await VlessConfigService.GetConfigsAsync();
+            Snackbar.Add("Конфигурация сохранена", Severity.Success);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Ошибка: {ex.Message}", Severity.Error);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _profiles = await VlessConfigService.GetConfigsAsync();
+        
+        // Автоматически выбрать первый профиль, если есть
+        if (_profiles.Any())
+        {
+            _selectedProfile = _profiles.First();
+        }
+    }
+
+    private async Task ToggleVpn()
+    {
+        if (_isLoading) return;
+
+        if (_isConnected)
+        {
+            await DisconnectAsync();
+        }
+        else
+        {
+            await ConnectAsync();
+        }
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (_selectedProfile == null)
+        {
+            Snackbar.Add("Выберите профиль для подключения", Severity.Warning);
+            return;
+        }
+
+        _isLoading = true;
+        StateHasChanged();
+
+        var (success, errorMsg) = await Task.Run(() =>
+        {
+            try
+            {
+                var ok = VpnService.Connect(_selectedProfile, out var msg);
+                return (ok, msg);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        });
+
+        _isLoading = false;
+        if (success)
+        {
+            _connectedProfile = _selectedProfile;
+            _isConnected = true;
+            _connectedAt = DateTime.Now;
+            Snackbar.Add("VPN подключён", Severity.Success);
+        }
+        else
+        {
+            Snackbar.Add($"Ошибка: {errorMsg}", Severity.Error);
+        }
         StateHasChanged();
     }
-    
-    private void HidePopup()
+
+    private async Task DisconnectAsync()
     {
-        _showPopup = null;
+        var profile = _connectedProfile;
+        if (profile == null) return;
+
+        _isLoading = true;
+        StateHasChanged();
+
+        var (success, errorMsg) = await Task.Run(() =>
+        {
+            try
+            {
+                var ok = VpnService.Disconnect(profile, out var msg);
+                return (ok, msg);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        });
+
+        _isLoading = false;
+        if (success)
+        {
+            _connectedProfile = null;
+            _isConnected = false;
+            _connectedAt = null;
+            Snackbar.Add("VPN отключён", Severity.Info);
+        }
+        else
+        {
+            Snackbar.Add($"Ошибка отключения: {errorMsg}", Severity.Error);
+        }
         StateHasChanged();
     }
 }

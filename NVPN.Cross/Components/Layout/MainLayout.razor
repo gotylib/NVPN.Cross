@@ -1,12 +1,65 @@
-﻿@inherits LayoutComponentBase
+@using NVPN.Cross.Components.UI
+@inherits LayoutComponentBase
 
-<div class="page">
 
-    <main>
-        @Body
-    </main>
-</div>
+<main>
+    @* Required *@
+    <MudThemeProvider IsDarkMode="@_isDarkMode" Theme="@Theme" />
+    <MudPopoverProvider />
+
+    @* Needed for dialogs *@
+    <MudDialogProvider />
+
+    @* Needed for snackbars *@
+    <MudSnackbarProvider />
+
+    @Body
+
+    <!-- Кнопка меню в правом верхнем углу -->
+    <div class="layout-menu-anchor">
+        <SettingsMenu IsDarkMode="@_isDarkMode" IsDarkModeChanged="@OnDarkModeChanged"
+                      UseSocksTunMode="@_useSocksTunMode" UseSocksTunModeChanged="@OnSocksTunModeChanged" />
+    </div>
+</main>
+
 
 @code {
-    // Полностью убрали MudBlazor для диагностики
+    private bool _isDarkMode = true;
+    private bool _useSocksTunMode;
+
+    protected override void OnInitialized()
+    {
+        _useSocksTunMode = Microsoft.Maui.Storage.Preferences.Default.Get("UseSocksTunMode", false);
+#if ANDROID
+        NVPN.Cross.Platforms.Android.AndroidServices.AndroidVpnServiceBase.UseSocksTunModeOverride = _useSocksTunMode;
+#endif
+    }
+  
+    MudTheme Theme = new MudTheme()
+    {
+        PaletteLight = new PaletteLight()
+        {
+            Primary = Colors.DeepPurple.Darken2,
+            Secondary = Colors.Green.Accent4,
+            AppbarBackground = Colors.BlueGray.Darken3,
+        },
+        PaletteDark = new PaletteDark()
+        {
+            Primary = Colors.Blue.Darken4,
+            Secondary = Colors.BlueGray.Darken3,
+            AppbarBackground = Colors.Gray.Darken3,
+        }
+    };
+
+    private void OnDarkModeChanged(bool value)
+    {
+        _isDarkMode = value;
+        StateHasChanged();
+    }
+
+    private void OnSocksTunModeChanged(bool value)
+    {
+        _useSocksTunMode = value;
+        StateHasChanged();
+    }
 }

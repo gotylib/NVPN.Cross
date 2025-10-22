@@ -1,0 +1,51 @@
+@using NVPN.Cross.Dal.Models
+
+@if (Profiles == null || !Profiles.Any())
+{
+    <div class="profile-list-empty">
+        <MudText Typo="Typo.body2" Color="Color.Default" Align="Align.Center">
+            Нет сохранённых профилей
+        </MudText>
+    </div>
+}
+else
+{
+    <div class="profile-list">
+        @foreach (var profile in Profiles)
+        {
+            <div class="profile-item @(IsSelected(profile) ? "selected" : "")"
+                 @onclick="() => OnProfileSelect.InvokeAsync(profile)">
+                <div class="profile-item-content">
+                    <div class="profile-item-icon">
+                        <MudIcon Icon="@Icons.Material.Filled.Dns" Size="Size.Small" />
+                    </div>
+                    <div class="profile-item-info">
+                        <MudText Typo="Typo.body2" Class="profile-item-name">
+                            @(string.IsNullOrWhiteSpace(profile.Remarks) ? "Без имени" : profile.Remarks)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="profile-item-address">
+                            @profile.Address:@profile.Port
+                        </MudText>
+                    </div>
+                    @if (IsSelected(profile))
+                    {
+                        <div class="profile-item-check">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Primary" />
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public List<VlessProfile>? Profiles { get; set; }
+    [Parameter] public VlessProfile? SelectedProfile { get; set; }
+    [Parameter] public EventCallback<VlessProfile> OnProfileSelect { get; set; }
+
+    private bool IsSelected(VlessProfile profile)
+    {
+        return SelectedProfile?.Id == profile.Id;
+    }
+}

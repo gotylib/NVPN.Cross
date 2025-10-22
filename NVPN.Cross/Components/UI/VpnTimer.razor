@@ -1,0 +1,57 @@
+@implements IDisposable
+
+<div class="vpn-timer @(IsConnected ? "active" : "")">
+    @if (IsConnected)
+    {
+        <MudIcon Icon="@Icons.Material.Filled.Timer" Size="Size.Small" Class="vpn-timer-icon" />
+        <MudText Typo="Typo.body1" Class="vpn-timer-text">@FormattedTime</MudText>
+    }
+</div>
+
+@code {
+    [Parameter] public bool IsConnected { get; set; }
+    [Parameter] public DateTime? ConnectedAt { get; set; }
+
+    private System.Threading.Timer? _timer;
+    private TimeSpan _elapsed;
+
+    private string FormattedTime => _elapsed.ToString(@"hh\:mm\:ss");
+
+    protected override void OnParametersSet()
+    {
+        if (IsConnected && ConnectedAt.HasValue)
+        {
+            StartTimer();
+        }
+        else
+        {
+            StopTimer();
+        }
+    }
+
+    private void StartTimer()
+    {
+        if (_timer != null) return;
+
+        _timer = new System.Threading.Timer(_ =>
+        {
+            if (ConnectedAt.HasValue)
+            {
+                _elapsed = DateTime.Now - ConnectedAt.Value;
+                InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private void StopTimer()
+    {
+        _timer?.Dispose();
+        _timer = null;
+        _elapsed = TimeSpan.Zero;
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}
