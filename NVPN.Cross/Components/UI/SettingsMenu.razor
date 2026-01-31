@@ -1,0 +1,63 @@
+<MudMenu AnchorOrigin="Origin.BottomRight"
+         TransformOrigin="Origin.TopRight"
+         OffsetY="8"
+         Dense="true"
+         Class="@CssClass">
+    <ActivatorContent>
+        <MudIconButton Icon="@Icons.Material.Filled.Settings"
+                       Color="Color.Primary"
+                       Variant="Variant.Text" />
+    </ActivatorContent>
+    <ChildContent>
+        <div class="settings-menu-content">
+            <div class="settings-menu-header">
+                <MudIcon Icon="@Icons.Material.Filled.Settings" Size="Size.Small" Class="me-2" />
+                <MudText Typo="Typo.body2">Настройки</MudText>
+            </div>
+            <div class="settings-menu-row">
+                <MudSwitch T="bool" 
+                           Checked="@IsDarkMode" 
+                           CheckedChanged="@OnDarkModeChanged" 
+                           Color="Color.Primary" />
+                <MudText Typo="Typo.body2">Тёмная тема</MudText>
+            </div>
+            <div class="settings-menu-row">
+                <MudSwitch T="bool" 
+                           Checked="@UseSocksTunMode" 
+                           CheckedChanged="@OnSocksTunModeChanged" 
+                           Color="Color.Primary" />
+                <MudText Typo="Typo.body2">Режим SocksTun</MudText>
+            </div>
+            @if (UseSocksTunMode)
+            {
+                <MudText Typo="Typo.caption" Class="pa-2" Style="color: var(--mud-palette-warning);">
+                    Важно: 127.0.0.1 не работает! Подключите — в уведомлении появится IP (192.168.x.x:10809). Его вводите в SocksTun.
+                </MudText>
+            }
+        </div>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    [Parameter] public bool IsDarkMode { get; set; }
+    [Parameter] public EventCallback<bool> IsDarkModeChanged { get; set; }
+    [Parameter] public bool UseSocksTunMode { get; set; }
+    [Parameter] public EventCallback<bool> UseSocksTunModeChanged { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+
+    private async Task OnDarkModeChanged(bool value)
+    {
+        IsDarkMode = value;
+        await IsDarkModeChanged.InvokeAsync(value);
+    }
+
+    private async Task OnSocksTunModeChanged(bool value)
+    {
+        UseSocksTunMode = value;
+        Microsoft.Maui.Storage.Preferences.Default.Set("UseSocksTunMode", value);
+#if ANDROID
+        NVPN.Cross.Platforms.Android.AndroidServices.AndroidVpnServiceBase.UseSocksTunModeOverride = value;
+#endif
+        await UseSocksTunModeChanged.InvokeAsync(value);
+    }
+}

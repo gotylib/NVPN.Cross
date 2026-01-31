@@ -1,0 +1,33 @@
+<MudDialog Elevation="0">
+    <DialogContent>
+        <MudTextField @bind-Value="_configText"
+                      Label="VLESS конфигурация"
+                      Placeholder="vless://..."
+                      Variant="Variant.Outlined"
+                      Lines="5"
+                      HelperText="Вставьте VLESS URL или конфигурацию"
+                      Class="mt-4" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Отмена</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save">Сохранить</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public EventCallback<string> OnSave { get; set; }
+
+    private string _configText = string.Empty;
+
+    private void Cancel()
+    {
+        MudDialog.Cancel();
+    }
+
+    private async Task Save()
+    {
+        await OnSave.InvokeAsync(_configText);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+}

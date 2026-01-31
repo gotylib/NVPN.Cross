@@ -1,13 +1,17 @@
-﻿using Android.App;
+using Android.App;
 using Android.Content;
-using Android.Runtime;
 using Android.Net;
 using Android.OS;
-using System.Diagnostics;
-using System.Net.Sockets;
-using System.Text.Json;
+using AndroidX.Core.App;
 using NVPN.Cross.Dal.Models;
+using System.Diagnostics;
+using System.Text.Json;
+using Debug = System.Diagnostics.Debug;
 using Process = System.Diagnostics.Process;
+using SysException = System.Exception;
+using SysFile = System.IO.File;
+using SysIO = System.IO;
+using SysThread = System.Threading.Thread;
 
 namespace NVPN.Cross.Platforms.Android.AndroidServices
 {
@@ -15,17 +19,28 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
     [IntentFilter([ServiceInterface])]
     public class AndroidVpnServiceBase : VpnService
     {
-        private ParcelFileDescriptor? vpnInterface;
-        private Process _xrayProcess;
+        private const string NOTIFICATION_CHANNEL_ID = "VPN_CHANNEL";
+        private const int NOTIFICATION_ID = 1001;
+
+        /// <summary>Если true — пробовать внешний tun2socks. xjasonlyu с /proc даёт "permission denied" на Android — используем C#.</summary>
+        public static bool UseExternalTun2Socks { get; set; } = true;
+
+        /// <summary>Резервное значение UseSocksTunMode (на случай, если Preferences в Blazor не успевает сохраниться).</summary>
+        public static bool UseSocksTunModeOverride { get; set; }
+
+        private ParcelFileDescriptor? _vpnInterface;
+        private Process? _xrayProcess;
+        private Process? tun2socksProcess;
         private bool _isRunning;
-        private static string? _tempConfigPath;
+        private string? _tempConfigPath;
         private VlessProfile? _profile;
-        private Thread? _vpnThread;
+        private Thread? _monitoringThread;
+        private volatile bool _monitoringActive = false;
+        private volatile bool _useHevTun2Socks;
+
         public override void OnCreate()
         {
             base.OnCreate();
-            
-            // Создаем канал уведомлений для Android 8.0+
             CreateNotificationChannel();
         }
 
@@ -33,848 +48,617 @@ namespace NVPN.Cross.Platforms.Android.AndroidServices
         {
             if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
             {
-                var channel = new NotificationChannel("VPN_CHANNEL", "VPN Service", NotificationImportance.Low)
+                var channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, "VPN Service", NotificationImportance.Default)
                 {
-                    Description = "VPN service notifications",
+                    Description = "VPN connection status",
                     LockscreenVisibility = NotificationVisibility.Private
                 };
-                
+
                 var notificationManager = GetSystemService(NotificationService) as NotificationManager;
                 notificationManager?.CreateNotificationChannel(channel);
             }
         }
 
-        private void StartForegroundService()
+        private Notification CreateNotification(string title, string text)
         {
-            var notification = new Notification.Builder(this, "VPN_CHANNEL")
-                .SetContentTitle("MAUI VPN")
-                .SetContentText("VPN service is running")
+            var builder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .SetContentTitle(title)
+                .SetContentText(text)
+                .SetStyle(new NotificationCompat.BigTextStyle().BigText(text))
                 .SetSmallIcon(Resource.Drawable.maui_splash_image)
-                .SetCategory(Notification.CategoryService)
+                .SetCategory(NotificationCompat.CategoryService)
                 .SetOngoing(true)
-                .Build();
-            
-            // Используем простой StartForeground без указания типа
-            StartForeground(1, notification);
+                .SetPriority(NotificationCompat.PriorityDefault);
+
+            return builder.Build();
         }
+
         public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
         {
-            // Диагностика для отладки
-            System.Diagnostics.Debug.WriteLine("=== VPN Service Starting ===");
-            System.Diagnostics.Debug.WriteLine($"Files Directory: {ApplicationContext.FilesDir?.AbsolutePath}");
-            
-            // Получаем профиль из Intent
-            if (intent?.GetStringExtra("profile") != null)
+            Debug.WriteLine("=== VPN Service Starting ===");
+
+            // КРИТИЧЕСКИ ВАЖНО: Вызываем StartForeground() ПЕРВЫМ ДЕЛОМ
+            // Android требует вызвать это в течение 5 секунд после startForegroundService()
+            var notification = CreateNotification("VPN", "Инициализация...");
+
+            // Для Android 14+ (API 34+) ОБЯЗАТЕЛЬНО указываем тип foreground service
+            // Используем ConnectedDevice - официальный тип для VPN сервисов
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.UpsideDownCake) // API 34
             {
-                _profile = System.Text.Json.JsonSerializer.Deserialize<VlessProfile>(intent.GetStringExtra("profile")!);
+                // ForegroundService.TypeConnectedDevice = 16 (0x10)
+                // Это официальный тип для VPN согласно документации Android
+                const int TYPE_CONNECTED_DEVICE = 16;
+                StartForeground(NOTIFICATION_ID, notification, (global::Android.Content.PM.ForegroundService)TYPE_CONNECTED_DEVICE);
+            }
+            else
+            {
+                StartForeground(NOTIFICATION_ID, notification);
             }
 
-            if (_profile == null)
+            Debug.WriteLine("Foreground service started successfully");
+
+            try
             {
+                // Получаем профиль из Intent
+                if (intent?.GetStringExtra("profile") != null)
+                {
+                    _profile = JsonSerializer.Deserialize<VlessProfile>(intent.GetStringExtra("profile")!);
+                }
+
+                if (_profile == null)
+                {
+                    Debug.WriteLine("ERROR: No profile provided");
+                    StopSelf();
+                    return StartCommandResult.NotSticky;
+                }
+
+                Debug.WriteLine($"Profile loaded: {_profile.Address}:{_profile.Port}");
+
+                // Запускаем VPN в отдельном потоке
+                new SysThread(StartVpnConnection) { IsBackground = true }.Start();
+
+                return StartCommandResult.Sticky;
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"ERROR in OnStartCommand: {ex.Message}");
+                Debug.WriteLine($"Stack trace: {ex.StackTrace}");
                 StopSelf();
                 return StartCommandResult.NotSticky;
             }
-
-            // Проверяем разрешения VPN
-            var vpnIntent = VpnService.Prepare(this);
-            if (vpnIntent != null)
-            {
-                System.Diagnostics.Debug.WriteLine("VPN permissions not granted - user needs to grant VPN permission");
-                System.Diagnostics.Debug.WriteLine($"VPN Intent: {vpnIntent}");
-                return StartCommandResult.Sticky;
-            }
-
-            // 1. Создаём VPN-интерфейс через Builder
-            var builder = new Builder(this);
-            builder.SetSession("NVPN")
-                   .AddAddress("10.0.0.2", 32)
-                   .AddRoute("0.0.0.0", 0)
-                   .AddDnsServer("8.8.8.8")
-                   .SetMtu(1500);
-
-            System.Diagnostics.Debug.WriteLine("Attempting to establish VPN interface...");
-            vpnInterface = builder.Establish();
-            
-            if (vpnInterface == null)
-            {
-                System.Diagnostics.Debug.WriteLine("ERROR: Failed to establish VPN interface - builder.Establish() returned null");
-                return StartCommandResult.Sticky;
-            }
-            
-            System.Diagnostics.Debug.WriteLine($"VPN Interface established successfully: {vpnInterface.FileDescriptor?.Handle}");
-            
-            // Сразу запускаем foreground сервис после создания VPN интерфейса
-            StartForegroundService();
-            
-            // Найти свободный порт, начиная с 10809
-            const int startPort = 10809;
-            const int maxPort = 10909;
-            var selectedPort = startPort; // Используем фиксированный порт для простоты
-            
-            // На Android используем простой подход - пробуем порты по очереди
-            for (var port = startPort; port <= maxPort; port++)
-            {
-                try
-                {
-                    using var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
-                    listener.Start();
-                    listener.Stop();
-                    selectedPort = port;
-                    break;
-                }
-                catch
-                {
-                    // Порт занят, пробуем следующий
-                    continue;
-                }
-            }
-            
-            // 2. Запускаем xray и tun2socks (как процессы)
-            // Конфиг для vless
-            var config = VlessProfile.GenerateXrayConfig(_profile, selectedPort);
-            var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-            _tempConfigPath = Path.Combine(Path.GetTempPath(), $"xray_{Guid.NewGuid()}.json");
-            File.WriteAllText(_tempConfigPath, json);
-            
-            // Пробуем найти xray в разных местах
-            var xrayExePath = FindXrayExecutable();
-            System.Diagnostics.Debug.WriteLine($"Selected xray path: {xrayExePath}");
-            
-            // Проверяем, что xray файл существует или доступен в PATH
-            bool xrayExists = File.Exists(xrayExePath);
-            bool xrayAvailable = IsCommandAvailable(xrayExePath);
-            
-            System.Diagnostics.Debug.WriteLine($"Xray file exists: {xrayExists}");
-            System.Diagnostics.Debug.WriteLine($"Xray command available: {xrayAvailable}");
-            
-            if (!xrayExists && !xrayAvailable)
-            {
-                System.Diagnostics.Debug.WriteLine($"Cannot find xray executable: {xrayExePath}");
-                System.Diagnostics.Debug.WriteLine("Xray not available, VPN service will run without proxy");
-                return StartCommandResult.Sticky;
-            }
-            
-            System.Diagnostics.Debug.WriteLine($"Using xray executable: {xrayExePath}");
-            
-            // Проверяем архитектуру файла перед запуском
-            if (File.Exists(xrayExePath))
-            {
-                IsValidElfFile(xrayExePath);
-            }
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = xrayExePath,
-                // Quote config path to handle spaces in paths
-                Arguments = $"-c \"{_tempConfigPath}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true
-            };
-            
-            try
-            {
-                _xrayProcess = Process.Start(psi);
-                if (_xrayProcess == null)
-                {
-                    System.Diagnostics.Debug.WriteLine("Failed to start xray process");
-                    return StartCommandResult.Sticky;
-                }
-                
-                System.Diagnostics.Debug.WriteLine($"Xray process started successfully with PID: {_xrayProcess.Id}");
-            }
-            catch (Exception exс)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error starting xray: {exс.Message}");
-                
-                // Попробуем альтернативный способ через shell
-                System.Diagnostics.Debug.WriteLine("Trying alternative method through shell");
-                try
-                {
-                    System.Diagnostics.Debug.WriteLine($"Attempting to start xray: {xrayExePath}");
-                        
-                    // Проверяем права еще раз
-                    var xrayFile = new Java.IO.File(xrayExePath);
-                    if (!xrayFile.CanExecute())
-                    {
-                        System.Diagnostics.Debug.WriteLine("Xray is not executable, trying to fix permissions");
-                        SetExecutablePermissions(xrayExePath);
-                    }
-                        
-                    // Запускаем через shell с явным указанием рабочей директории
-                    var shellPsi = new ProcessStartInfo
-                    {
-                        FileName = "/system/bin/sh",
-                        Arguments = $"-c \"cd '{ApplicationContext.FilesDir?.AbsolutePath}' && chmod 755 '{xrayExePath}' && '{xrayExePath}' -c '{_tempConfigPath}'\"",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardError = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardInput = true
-                    };
-                        
-                    _xrayProcess = Process.Start(shellPsi);
-                    if (_xrayProcess == null)
-                    {
-                        System.Diagnostics.Debug.WriteLine("Failed to start xray process via shell");
-                        return StartCommandResult.Sticky;
-                    }
-                        
-                    // Ждем немного и проверяем статус
-                    Thread.Sleep(3000);
-                        
-                    if (_xrayProcess.HasExited)
-                    {
-                        var error = _xrayProcess.StandardError.ReadToEnd();
-                        var output = _xrayProcess.StandardOutput.ReadToEnd();
-                        System.Diagnostics.Debug.WriteLine($"Xray process exited immediately. Exit code: {_xrayProcess.ExitCode}");
-                        System.Diagnostics.Debug.WriteLine($"Xray stderr: {error}");
-                        System.Diagnostics.Debug.WriteLine($"Xray stdout: {output}");
-                        return StartCommandResult.Sticky;
-                    }
-                        
-                    System.Diagnostics.Debug.WriteLine($"Xray process started successfully with PID: {_xrayProcess.Id}");
-                        
-                    // Запускаем мониторинг вывода xray в отдельном потоке
-                    new Thread(() =>
-                        {
-                            try
-                            {
-                                while (!_xrayProcess.HasExited && _isRunning)
-                                {
-                                    var line = _xrayProcess.StandardOutput.ReadLine();
-                                    if (!string.IsNullOrEmpty(line))
-                                        System.Diagnostics.Debug.WriteLine($"Xray: {line}");
-                                    
-                                    var errorLine = _xrayProcess.StandardError.ReadLine();
-                                    if (!string.IsNullOrEmpty(errorLine))
-                                        System.Diagnostics.Debug.WriteLine($"Xray ERROR: {errorLine}");
-                                    
-                                    Thread.Sleep(100);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Xray monitor error: {ex.Message}");
-                            }
-                        })
-                        { IsBackground = true }.Start();
-                        
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Error starting xray: {ex.Message}");
-                    return StartCommandResult.Sticky;
-                }
-            }
-            
-
-            // Запускаем xray для SOCKS прокси
-            _isRunning = true;
-
-            // Запускаем поток для обработки VPN трафика
-            _vpnThread = new Thread(ProcessVpnTraffic)
-            {
-                IsBackground = true,
-                Name = "VPN Traffic Processor"
-            };
-            _vpnThread.Start();
-
-            return StartCommandResult.Sticky;
         }
 
-        public override void OnDestroy()
-        {
-            _isRunning = false;
-            
-            // Ждем завершения потока
-            _vpnThread?.Join(1000);
-            
-            vpnInterface?.Close();
-            vpnInterface = null;
-            
-            try { _xrayProcess?.Kill(); }
-            catch
-            {
-                // ignored
-            }
-
-            // Удаляем временный конфиг
-            if (!string.IsNullOrEmpty(_tempConfigPath) && File.Exists(_tempConfigPath))
-            {
-                try { File.Delete(_tempConfigPath); }
-                catch { /* ignored */ }
-            }
-
-            base.OnDestroy();
-        }
-
-        private void ProcessVpnTraffic()
+        private void StartVpnConnection()
         {
             try
             {
-                using var vpnFile = new Java.IO.FileInputStream(vpnInterface.FileDescriptor);
-                using var vpnChannel = vpnFile.Channel;
-        
-                var socksClient = new SocksClient("127.0.0.1", 10809);
-                var buffer = Java.Nio.ByteBuffer.Allocate(32767);
-        
+                Debug.WriteLine("Starting VPN connection in background thread");
+
+                // Создаём VPN-интерфейс
+                var builder = new Builder(this);
+                builder.SetSession("NVPN")
+                       .AddAddress("10.0.0.2", 24)
+                       .AddRoute("0.0.0.0", 0)
+                       .AddDnsServer("8.8.8.8")
+                       .AddDnsServer("1.1.1.1")
+                       .SetBlocking(true)
+                       .SetMtu(1500);
+
+                // КРИТИЧНО: Исключаем наше приложение из VPN!
+                // Иначе Xray (дочерний процесс) не сможет подключиться к серверу VLESS —
+                // его трафик пойдёт в TUN → tun2socks → SOCKS(Xray) → мёртвая петля.
+                try
+                {
+                    builder.AddDisallowedApplication(PackageName ?? "com.companyname.nvpn.cross");
+                    Debug.WriteLine($"✓ Excluded app from VPN (Xray will use real network): {PackageName}");
+                }
+                catch (Java.Lang.Exception ex)
+                {
+                    Debug.WriteLine($"WARNING: Could not exclude app from VPN: {ex.Message}");
+                }
+
+                Debug.WriteLine("Establishing VPN interface...");
+                _vpnInterface = builder.Establish();
+
+                if (_vpnInterface == null)
+                {
+                    Debug.WriteLine("ERROR: Failed to establish VPN interface");
+                    MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                    return;
+                }
+
+                Debug.WriteLine($"VPN Interface established: fd={_vpnInterface.Fd}");
+
+                // ОБЯЗАТЕЛЬНО: Немедленно получаем FD, пока он не закрыт
+                int tunFd = -1;
+                try
+                {
+                    tunFd = _vpnInterface.DetachFd();
+                    Debug.WriteLine($"✓ Detached FD: {tunFd}");
+
+                    if (tunFd <= 0)
+                    {
+                        Debug.WriteLine($"ERROR: Invalid FD after detach: {tunFd}");
+                        MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                        return;
+                    }
+                }
+                catch (Java.Lang.IllegalStateException ex)
+                {
+                    Debug.WriteLine($"ERROR: FD already closed! {ex.Message}");
+
+                    // Пробуем альтернативный способ: получаем FD через отражение
+                    if (tunFd <= 0)
+                    {
+                        MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                        return;
+                    }
+                }
+
+                // Обновляем уведомление
+                UpdateNotification("VPN", "Запуск прокси...");
+
+                // Запускаем Xray
+                if (!StartXrayProcess())
+                {
+                    Debug.WriteLine("ERROR: Failed to start Xray process");
+                    MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                    return;
+                }
+
+                // Даем Xray время запуститься
+                SysThread.Sleep(2000);
+
+                _isRunning = true;
+
+                var cts = new CancellationTokenSource();
+
+                // 0) Приоритет: libhev-socks5-tunnel (in-process, обходит SELinux)
+                if (StartHevTun2Socks(tunFd, cts))
+                {
+                    _useHevTun2Socks = true;
+                    UpdateNotification("VPN подключен", $"Сервер: {_profile?.Address} (hev)");
+                }
+                
+                Debug.WriteLine("VPN connection established successfully");
+
+                // Простая loop для поддержания сервиса активным
                 while (_isRunning)
+                {
+                    SysThread.Sleep(1000);
+
+                    // Проверяем, жив ли xray процесс
+                    if (_xrayProcess?.HasExited == true)
+                    {
+                        Debug.WriteLine("Xray process has exited unexpectedly");
+                        break;
+                    }
+                }
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"ERROR in StartVpnConnection: {ex.Message}");
+                Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                MainThread.BeginInvokeOnMainThread(() => StopSelf());
+            }
+
+        }
+
+        /// <summary>Запускает libhev-socks5-tunnel in-process (TUN FD напрямую, обход SELinux).</summary>
+        private static bool StartHevTun2Socks(int tunFd, CancellationTokenSource cts)
+        {
+            if (!HevSocks5Tunnel.IsAvailable)
+            {
+                Debug.WriteLine("hev-socks5-tunnel: library not found, skipping");
+                return false;
+            }
+            try
+            {
+                var runThread = new SysThread(() =>
                 {
                     try
                     {
-                        buffer.Clear();
-                        var bytesRead = vpnChannel.Read(buffer);
-                
-                        if (bytesRead > 0)
+                        Debug.WriteLine("=== HevSocks5Tunnel.Run started (127.0.0.1:10809) ===");
+                        int r = HevSocks5Tunnel.Run(tunFd, "127.0.0.1", 10809);
+                        Debug.WriteLine($"HevSocks5Tunnel exited with code {r}");
+                    }
+                    catch (SysException ex)
+                    {
+                        Debug.WriteLine($"HevSocks5Tunnel error: {ex.Message}");
+                    }
+                }) { IsBackground = true };
+                runThread.Start();
+                SysThread.Sleep(500);
+                if (!runThread.IsAlive)
+                {
+                    Debug.WriteLine("HevSocks5Tunnel thread died immediately");
+                    return false;
+                }
+                Debug.WriteLine("✓ HevSocks5Tunnel started");
+                return true;
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"HevSocks5Tunnel start error: {ex.Message}");
+                return false;
+            }
+        }
+        private bool StartXrayProcess(string? socksListen = null)
+        {
+            try
+            {
+                Debug.WriteLine("Starting Xray process...");
+
+                // Находим свободный порт
+                const int socksPort = 10809;
+
+                // КРИТИЧЕСКИ ВАЖНО: Извлекаем geo-файлы в ту же директорию, где будет конфиг
+                var geoDir = ExtractGeoFilesFromAssets();
+
+                // Генерируем конфиг С путями к geo-файлам (обычный режим с SOCKS)
+                Debug.WriteLine($"DEBUG: geoDir passed to GenerateXrayConfig: '{geoDir}', socksListen: {socksListen ?? "127.0.0.1"}");
+                var config = VlessProfile.GenerateXrayConfig(_profile!, socksPort, geoDir, socksListen);
+                var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+
+                _tempConfigPath = Path.Combine(CacheDir?.AbsolutePath ?? Path.GetTempPath(), $"xray_config_{Guid.NewGuid()}.json");
+                SysFile.WriteAllText(_tempConfigPath, json);
+
+                Debug.WriteLine($"Config written to: {_tempConfigPath}");
+                Debug.WriteLine($"Config content (first 1000 chars): {(json.Length > 1000 ? json.Substring(0, 1000) : json)}");
+
+                // Находим xray executable
+                var xrayPath = ExtractXrayFromAssets();
+                if (string.IsNullOrEmpty(xrayPath) || !SysFile.Exists(xrayPath))
+                {
+                    Debug.WriteLine($"ERROR: Xray executable not found at: {xrayPath}");
+                    return false;
+                }
+
+                Debug.WriteLine($"Using Xray at: {xrayPath}");
+
+                // Проверяем размер перед запуском
+                var xrayFileInfo = new FileInfo(xrayPath);
+                Debug.WriteLine($"Xray file size: {xrayFileInfo.Length} bytes");
+
+                // УБРАНО: Не нужно chmod для файлов в NativeLibraryDir - они уже executable
+                // SetExecutablePermissions(xrayPath); 
+
+                // Запускаем xray напрямую (не через shell - файл уже executable)
+                var psi = new ProcessStartInfo
+                {
+                    FileName = xrayPath,
+                    Arguments = $"run -c \"{_tempConfigPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true
+                };
+
+                // КРИТИЧЕСКИ ВАЖНО: Устанавливаем переменную окружения для Xray
+                psi.EnvironmentVariables["XRAY_LOCATION_ASSET"] = geoDir;
+                Debug.WriteLine($"Set XRAY_LOCATION_ASSET={geoDir}");
+
+                Debug.WriteLine($"Starting command: {psi.FileName} {psi.Arguments}");
+
+                _xrayProcess = Process.Start(psi);
+
+                if (_xrayProcess == null)
+                {
+                    Debug.WriteLine("ERROR: Failed to start Xray process");
+                    return false;
+                }
+
+                Debug.WriteLine($"Xray process started with PID: {_xrayProcess.Id}");
+
+                // Ждем 5 секунд, чтобы Xray успел полностью стартовать и поднять SOCKS5 сервер
+                Debug.WriteLine("Waiting for Xray to initialize...");
+                SysThread.Sleep(5000);
+
+                if (_xrayProcess.HasExited)
+                {
+                    var error = _xrayProcess.StandardError.ReadToEnd();
+                    var output = _xrayProcess.StandardOutput.ReadToEnd();
+                    Debug.WriteLine($"ERROR: Xray exited immediately. Exit code: {_xrayProcess.ExitCode}");
+                    Debug.WriteLine($"Stderr: {error}");
+                    Debug.WriteLine($"Stdout: {output}");
+                    return false;
+                }
+
+                // Запускаем мониторинг вывода
+                StartMonitoringThread();
+
+                Debug.WriteLine("Xray process started successfully");
+                return true;
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"ERROR starting Xray: {ex.Message}");
+                return false;
+            }
+        }
+      
+        private void StartMonitoringThread()
+        {
+            if (_monitoringThread != null && _monitoringThread.IsAlive)
+                return;
+
+            _monitoringActive = true;
+
+            _monitoringThread = new SysThread(() =>
+              {
+                Debug.WriteLine("Monitoring thread started");
+
+                while (_monitoringActive)
+                {
+                    try
+                    {
+                        Thread.Sleep(5000);
+
+                        // Проверяем Xray
+                        if (_xrayProcess?.HasExited == true)
                         {
-                            buffer.Flip();
-                            var data = new byte[buffer.Remaining()];
-                            buffer.Get(data);
-                    
-                            // Проксируем через SOCKS
-                            var proxiedData = socksClient.ProxyData(data, data.Length);
-                    
-                            if (proxiedData != null && proxiedData.Length > 0)
-                            {
-                                var outputBuffer = Java.Nio.ByteBuffer.Wrap(proxiedData);
-                                while (outputBuffer.HasRemaining)
-                                {
-                                    vpnChannel.Write(outputBuffer);
-                                }
-                            }
+                            Debug.WriteLine("[MONITOR] Xray died");
+                            MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                            break;
                         }
-                        else
+
+                        // Проверяем tun2socks
+                        if (tun2socksProcess?.HasExited == true)
                         {
-                            Thread.Sleep(10);
+                            Debug.WriteLine("[MONITOR] tun2socks died");
+                            MainThread.BeginInvokeOnMainThread(() => StopSelf());
+                            break;
                         }
+
+                        Debug.WriteLine("[MONITOR] All processes are running");
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
-                        if (!_isRunning) break;
+                        Debug.WriteLine($"[MONITOR ERROR] {ex.Message}");
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"VPN Process Error: {ex.Message}");
-            }
-        }
 
-        private void ProcessVpnTrafficWithStreams(FileStream inputStream, FileStream outputStream, SocksClient socksClient)
-        {
-            var buffer = new byte[4096];
-            
-            System.Diagnostics.Debug.WriteLine("SOCKS client created for 127.0.0.1:10809");
-            System.Diagnostics.Debug.WriteLine("Starting VPN traffic processing loop...");
-
-            while (_isRunning)
+                Debug.WriteLine("Monitoring thread stopped");
+            })
             {
-                try
-                {
-                    // Читаем данные из VPN интерфейса
-                    var bytesRead = inputStream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"VPN: Received {bytesRead} bytes from interface");
-                        
-                        // Анализируем IP пакет
-                        if (IsValidIpPacket(buffer, bytesRead))
-                        {
-                            System.Diagnostics.Debug.WriteLine($"VPN: Valid IP packet detected, proxying through SOCKS");
-                            
-                            // Проксируем через SOCKS
-                            var proxiedData = socksClient.ProxyData(buffer, bytesRead);
-                            if (proxiedData != null && proxiedData.Length > 0)
-                            {
-                                outputStream.Write(proxiedData, 0, proxiedData.Length);
-                                outputStream.Flush();
-                                System.Diagnostics.Debug.WriteLine($"VPN: Sent {proxiedData.Length} bytes back to interface");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine("VPN: SOCKS proxy returned no data");
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("VPN: Invalid IP packet received");
-                        }
-                    }
-                    else
-                    {
-                        // Небольшая задержка если нет данных
-                        Thread.Sleep(10);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
-                    break;
-                }
-            }
-        }
-
-        private void ProcessVpnTrafficWithSingleStream(FileStream vpnStream, SocksClient socksClient)
-        {
-            var buffer = new byte[4096];
-            
-            System.Diagnostics.Debug.WriteLine("SOCKS client created for 127.0.0.1:10809");
-            System.Diagnostics.Debug.WriteLine("Starting VPN traffic processing loop (single stream)...");
-
-            while (_isRunning)
-            {
-                try
-                {
-                    // Читаем данные из VPN интерфейса
-                    var bytesRead = vpnStream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"VPN: Received {bytesRead} bytes from interface");
-                        
-                        // Анализируем IP пакет
-                        if (IsValidIpPacket(buffer, bytesRead))
-                        {
-                            System.Diagnostics.Debug.WriteLine($"VPN: Valid IP packet detected, proxying through SOCKS");
-                            
-                            // Проксируем через SOCKS
-                            var proxiedData = socksClient.ProxyData(buffer, bytesRead);
-                            if (proxiedData != null && proxiedData.Length > 0)
-                            {
-                                vpnStream.Write(proxiedData, 0, proxiedData.Length);
-                                vpnStream.Flush();
-                                System.Diagnostics.Debug.WriteLine($"VPN: Sent {proxiedData.Length} bytes back to interface");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine("VPN: SOCKS proxy returned no data");
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("VPN: Invalid IP packet received");
-                        }
-                    }
-                    else
-                    {
-                        // Небольшая задержка если нет данных
-                        Thread.Sleep(10);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"VPN Traffic Error: {ex.Message}");
-                    break;
-                }
-            }
-        }
-
-        private bool IsValidIpPacket(byte[] data, int length)
-        {
-            if (length < 20) return false; // Минимальный размер IP заголовка
-            
-            // Проверяем версию IP (4 или 6)
-            var version = (data[0] >> 4) & 0x0F;
-            return version == 4 || version == 6;
-        }
-
-        private string FindXrayExecutable()
-        {
-            // Сначала пробуем найти уже извлеченный xray
-            var extractedXrayPath = Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray");
-            if (File.Exists(extractedXrayPath))
-            {
-                System.Diagnostics.Debug.WriteLine($"Found extracted xray at: {extractedXrayPath}");
-                return extractedXrayPath;
-            }
-            
-            // Если не найден, пытаемся извлечь из APK
-            var extractedPath = ExtractXrayFromAssets();
-            if (!string.IsNullOrEmpty(extractedPath) && File.Exists(extractedPath))
-            {
-                System.Diagnostics.Debug.WriteLine($"Successfully extracted xray to: {extractedPath}");
-                return extractedPath;
-            }
-            
-            // Fallback: поиск в других местах
-            var possiblePaths = new[]
-            {
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Xray", "Android", "xray"),
-                Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray"),
-                Path.Combine(ApplicationContext.PackageCodePath ?? "", "xray"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "xray"),
-                "xray"
+                IsBackground = true,
+                Name = "VPN-Monitor"
             };
 
-            foreach (var path in possiblePaths)
+            _monitoringThread.Start();
+        }
+
+        private void StopMonitoringThread()
+        {
+            _monitoringActive = false;
+            _monitoringThread?.Interrupt();
+
+            if (_monitoringThread != null && _monitoringThread.IsAlive)
             {
-                System.Diagnostics.Debug.WriteLine($"Checking xray path: {path}");
-                if (File.Exists(path))
+                if (!_monitoringThread.Join(3000))
                 {
-                    System.Diagnostics.Debug.WriteLine($"Found xray at: {path}");
-                    return path;
+                    Debug.WriteLine("WARNING: Monitoring thread didn't stop gracefully");
                 }
             }
 
-            System.Diagnostics.Debug.WriteLine("Xray not found in any of the expected locations");
-            return "xray";
+            _monitoringThread = null;
         }
 
         private string ExtractXrayFromAssets()
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine("Attempting to extract xray from APK assets");
-                
-                var outputPath = Path.Combine(ApplicationContext.FilesDir?.AbsolutePath ?? "", "xray");
-                
-                // Удаляем старый файл если существует
-                if (File.Exists(outputPath))
+                // КРИТИЧЕСКИ ВАЖНО: На Android 10+ используем NativeLibraryDir
+                // Только файлы из lib/ директории могут быть выполнены
+                var nativeLibDir = ApplicationContext?.ApplicationInfo?.NativeLibraryDir;
+                if (string.IsNullOrEmpty(nativeLibDir))
                 {
-                    try { File.Delete(outputPath); }
-                    catch { /* ignored */ }
+                    Debug.WriteLine("ERROR: Could not get NativeLibraryDir");
+                    return string.Empty;
                 }
-                
-                // Проверяем, что папка существует
-                var outputDir = Path.GetDirectoryName(outputPath);
-                if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
+
+                // Бинарник упакован как libxray.so
+                var xrayPath = Path.Combine(nativeLibDir, "libxray.so");
+                Debug.WriteLine($"Looking for Xray at: {xrayPath}");
+
+                if (!SysFile.Exists(xrayPath))
                 {
-                    Directory.CreateDirectory(outputDir);
+                    Debug.WriteLine($"ERROR: Xray not found at: {xrayPath}");
+                    return string.Empty;
                 }
-                
-                // Список возможных путей в assets
-                var assetPaths = new[]
+
+                var fileInfo = new FileInfo(xrayPath);
+                Debug.WriteLine($"✓ Found Xray: {fileInfo.Length} bytes at {xrayPath}");
+
+                return xrayPath;
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"ERROR in ExtractXrayFromAssets: {ex.Message}");
+                Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                return string.Empty;
+            }
+        }
+
+        private string ExtractGeoFilesFromAssets()
+        {
+            try
+            {
+                // КРИТИЧЕСКИ ВАЖНО: Извлекаем geo-файлы прямо в cache директорию (не в поддиректорию!)
+                // Xray ищет их относительно конфиг-файла
+                var geoDir = CacheDir?.AbsolutePath ?? Path.GetTempPath();
+
+                Debug.WriteLine($"Extracting geo files to: {geoDir}");
+
+                // Пробуем разные пути в assets
+                string[] possiblePaths = new[] { "geoip.dat", "Android/geoip.dat", "Xray/Android/geoip.dat" };
+
+                // Извлекаем geoip.dat
+                var geoipPath = Path.Combine(geoDir, "geoip.dat");
+                if (!SysFile.Exists(geoipPath))
                 {
-                    "Xray/Android/xray",
-                    "xray/Android/xray", 
-                    "xray",
-                    "Resources/Xray/Android/xray",
-                    "Resources/xray/Android/xray"
-                };
-                
-                foreach (var assetPath in assetPaths)
+                    bool extracted = false;
+                    foreach (var assetPath in possiblePaths)
+                    {
+                        try
+                        {
+                            Debug.WriteLine($"Trying to open: {assetPath}");
+                            using var geoipStream = ApplicationContext?.Assets?.Open(assetPath);
+                            using var geoipFile = SysFile.Create(geoipPath);
+                            geoipStream?.CopyTo(geoipFile);
+                            Debug.WriteLine($"✓ Extracted geoip.dat from {assetPath}: {new FileInfo(geoipPath).Length} bytes");
+                            extracted = true;
+                            break;
+                        }
+                        catch (SysException ex)
+                        {
+                            Debug.WriteLine($"Failed to extract from '{assetPath}': {ex.Message}");
+                        }
+                    }
+
+                    if (!extracted)
+                    {
+                        Debug.WriteLine("ERROR: Could not extract geoip.dat from any path");
+                        return string.Empty;
+                    }
+                }
+
+                // Извлекаем geosite.dat
+                var geositePath = Path.Combine(geoDir, "geosite.dat");
+                if (!SysFile.Exists(geositePath))
+                {
+                    bool extracted = false;
+                    possiblePaths = ["geosite.dat", "Android/geosite.dat", "Xray/Android/geosite.dat"];
+
+                    foreach (var assetPath in possiblePaths)
+                    {
+                        try
+                        {
+                            Debug.WriteLine($"Trying to open: {assetPath}");
+                            using var geositeStream = ApplicationContext?.Assets?.Open(assetPath);
+                            using var geositeFile = SysFile.Create(geositePath);
+                            geositeStream?.CopyTo(geositeFile);
+                            Debug.WriteLine($"✓ Extracted geosite.dat from {assetPath}: {new FileInfo(geositePath).Length} bytes");
+                            extracted = true;
+                            break;
+                        }
+                        catch (SysException ex)
+                        {
+                            Debug.WriteLine($"Failed to extract from '{assetPath}': {ex.Message}");
+                        }
+                    }
+
+                    if (!extracted)
+                    {
+                        Debug.WriteLine("ERROR: Could not extract geosite.dat from any path");
+                        return string.Empty;
+                    }
+                }
+
+                Debug.WriteLine($"✓ Geo files ready in: {geoDir}");
+                return geoDir;
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"ERROR extracting geo files: {ex.Message}");
+                Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                return string.Empty;
+            }
+        }
+
+        private void UpdateNotification(string title, string text)
+        {
+            try
+            {
+                var notification = CreateNotification(title, text);
+                var nid = NOTIFICATION_ID;
+                MainThread.BeginInvokeOnMainThread(() =>
                 {
                     try
                     {
-                        System.Diagnostics.Debug.WriteLine($"Trying asset path: {assetPath}");
-                        
-                        using var inputStream = Assets.Open(assetPath);
-                        if (inputStream != null)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Found xray in assets at {assetPath}, extracting to: {outputPath}");
-                            
-                            using (var outputStream = File.Create(outputPath))
-                            {
-                                inputStream.CopyTo(outputStream);
-                                outputStream.Flush();
-                            }
-                            
-                            // Даем время файлу записаться
-                            Thread.Sleep(200);
-                            
-                            var fileInfo = new FileInfo(outputPath);
-                            System.Diagnostics.Debug.WriteLine($"Successfully extracted xray ({fileInfo.Length} bytes)");
-                            
-                            if (fileInfo.Length > 0)
-                            {
-                                // Устанавливаем права на выполнение
-                                if (SetExecutablePermissions(outputPath))
-                                {
-                                    // Проверяем, что файл действительно исполняемый
-                                    if (IsValidElfFile(outputPath))
-                                    {
-                                        return outputPath;
-                                    }
-                                }
-                            }
-                        }
+                        var nm = GetSystemService(NotificationService) as NotificationManager;
+                        nm?.Notify(nid, notification);
                     }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error trying asset path {assetPath}: {ex.Message}");
-                    }
-                }
+                    catch (SysException ex) { Debug.WriteLine($"UpdateNotification: {ex.Message}"); }
+                });
             }
-            catch (Exception ex)
+            catch (SysException ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error extracting xray from assets: {ex.Message}");
-            }
-            
-            return string.Empty;
-        }
-
-        private bool IsValidElfFile(string filePath)
-        {
-            try
-            {
-                using var fs = File.OpenRead(filePath);
-                var buffer = new byte[24]; // Читаем больше байт для полного заголовка
-                var bytesRead = fs.Read(buffer, 0, 24);
-                
-                if (bytesRead < 16)
-                {
-                    System.Diagnostics.Debug.WriteLine($"File too small for ELF header: {bytesRead} bytes");
-                    return false;
-                }
-                
-                // Проверяем ELF magic
-                if (buffer[0] != 0x7F || buffer[1] != 0x45 || buffer[2] != 0x4C || buffer[3] != 0x46)
-                {
-                    System.Diagnostics.Debug.WriteLine("File does not have ELF magic header");
-                    return false;
-                }
-                
-                // Проверяем архитектуру (5-й байт: 1 = 32-bit, 2 = 64-bit)
-                var is64bit = buffer[4] == 2;
-                System.Diagnostics.Debug.WriteLine($"ELF file is {(is64bit ? "64-bit" : "32-bit")}");
-                
-                // Проверяем архитектуру
-                // В 32-bit ELF: machine находится в байте 18
-                // В 64-bit ELF: machine находится в байте 18
-                byte machine;
-                if (bytesRead >= 19)
-                {
-                    machine = buffer[18];
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine("File too small to read machine architecture");
-                    return false;
-                }
-                
-                string arch = machine switch
-                {
-                    0x28 => "ARM",
-                    0x3E => "x86_64", 
-                    0xB7 => "AArch64",
-                    _ => $"Unknown (0x{machine:X2})"
-                };
-                
-                System.Diagnostics.Debug.WriteLine($"ELF file architecture: {arch}");
-                
-                // Проверяем совместимость архитектуры
-                if (machine == 0x3E) // x86_64
-                {
-                    System.Diagnostics.Debug.WriteLine("ELF file is compatible with x86_64 emulator");
-                    return true;
-                }
-                else if (machine == 0xB7) // AArch64
-                {
-                    System.Diagnostics.Debug.WriteLine($"ELF file architecture {arch} - will try to run anyway");
-                    return true; // Пробуем запустить даже если архитектура не совпадает
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"ELF file architecture {arch} - unknown compatibility");
-                    return true; // Пробуем запустить
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error checking ELF file: {ex.Message}");
-                return false;
+                Debug.WriteLine($"Failed to update notification: {ex.Message}");
             }
         }
 
-        private bool SetExecutablePermissions(string filePath)
+        public override void OnDestroy()
         {
+            Debug.WriteLine("=== VPN Service Stopping ===");
+
+            _isRunning = false;
+
+            // Закрываем VPN интерфейс
             try
             {
-                System.Diagnostics.Debug.WriteLine($"Setting executable permissions for: {filePath}");
-                
-                // Метод 1: Через Runtime с проверкой результата
+                _vpnInterface?.Close();
+                _vpnInterface = null;
+                Debug.WriteLine("VPN interface closed");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.WriteLine($"Error closing VPN interface: {ex.Message}");
+            }
+
+            // Останавливаем Xray
+            try
+            {
+                if (_xrayProcess != null && !_xrayProcess.HasExited)
+                {
+                    _xrayProcess.Kill();
+                    _xrayProcess.WaitForExit(3000);
+                    Debug.WriteLine("Xray process terminated");
+                }
+            }
+            catch (SysException ex)
+            {
+                Debug.WriteLine($"Error stopping Xray: {ex.Message}");
+            }
+
+            // Останавливаем hev-socks5-tunnel (in-process)
+            if (_useHevTun2Socks)
+            {
                 try
                 {
-                    var process = Java.Lang.Runtime.GetRuntime().Exec(new[] { "chmod", "755", filePath });
-                    process.WaitFor(); // Ждем завершения
-                    
-                    var exitCode = process.ExitValue();
-                    if (exitCode == 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Successfully set permissions via Runtime: {filePath}");
-                        
-                        // Проверяем, что права установились
-                        var file = new Java.IO.File(filePath);
-                        if (file.CanExecute())
-                        {
-                            System.Diagnostics.Debug.WriteLine("File is now executable");
-                            return true;
-                        }
-                    }
-                    System.Diagnostics.Debug.WriteLine($"Runtime chmod failed with exit code: {exitCode}");
+                    HevSocks5Tunnel.Stop();
+                    Debug.WriteLine("hev-socks5-tunnel stopped");
                 }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Runtime chmod failed: {ex.Message}");
-                }
-                
-                // Метод 2: Попробуем через Process с полным путем к chmod
-                try
-                {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = "/system/bin/chmod",
-                        Arguments = $"755 \"{filePath}\"",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true
-                    };
-                    
-                    using var process = Process.Start(psi);
-                    if (process != null)
-                    {
-                        process.WaitForExit(5000);
-                        if (process.ExitCode == 0)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Successfully set permissions via Process: {filePath}");
-                            return true;
-                        }
-                        else
-                        {
-                            var error = process.StandardError.ReadToEnd();
-                            System.Diagnostics.Debug.WriteLine($"Process chmod failed: {error}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Process chmod failed: {ex.Message}");
-                }
-                
-                // Метод 3: Попробуем скопировать и установить права по-другому
-                try
-                {
-                    var tempPath = Path.Combine(Path.GetTempPath(), "xray_temp");
-                    if (File.Exists(tempPath)) File.Delete(tempPath);
-                    
-                    File.Copy(filePath, tempPath);
-                    File.Delete(filePath);
-                    File.Move(tempPath, filePath);
-                    
-                    // Еще одна попытка
-                    Java.Lang.Runtime.GetRuntime().Exec(new[] { "chmod", "700", filePath }).WaitFor();
-                    
-                    var file = new Java.IO.File(filePath);
-                    if (file.CanExecute())
-                    {
-                        System.Diagnostics.Debug.WriteLine("File is executable after copy method");
-                        return true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Copy method failed: {ex.Message}");
-                }
-                
-                System.Diagnostics.Debug.WriteLine("All permission setting methods failed");
-                return false;
+                catch (SysException ex) { Debug.WriteLine($"Error stopping hev: {ex.Message}"); }
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error setting executable permissions: {ex.Message}");
-                return false;
-            }
-        }
 
-        private bool IsCommandAvailable(string command)
-        {
+            // Останавливаем tun2socks (внешний процесс)
             try
             {
-                var psi = new ProcessStartInfo
+                if (tun2socksProcess != null && !tun2socksProcess.HasExited)
                 {
-                    FileName = "which",
-                    Arguments = command,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                
-                using var process = Process.Start(psi);
-                if (process != null)
-                {
-                    process.WaitForExit();
-                    return process.ExitCode == 0;
+                    tun2socksProcess.Kill();
+                    tun2socksProcess.WaitForExit(3000);
+                    Debug.WriteLine("tun2socksProcess terminated");
                 }
             }
-            catch
+            catch (SysException ex)
             {
-                // Игнорируем ошибки
-            }
-            return false;
-        }
-
-        private void StartProcess(ref Process proc, string file, string args)
-        {
-            if (!File.Exists(file)) return;
-            var psi = new ProcessStartInfo
-            {
-                FileName = file,
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            proc = Process.Start(psi);
-        }
-    }
-
-    // Простой SOCKS клиент для проксирования трафика
-    public class SocksClient : IDisposable
-    {
-        private readonly string _host;
-        private readonly int _port;
-        private TcpClient? _client;
-        private NetworkStream? _stream;
-
-        public SocksClient(string host, int port)
-        {
-            _host = host;
-            _port = port;
-        }
-
-        public byte[]? ProxyData(byte[] data, int length)
-        {
-            try
-            {
-                if (_client == null || !_client.Connected)
-                {
-                    _client = new TcpClient();
-                    _client.Connect(_host, _port);
-                    _stream = _client.GetStream();
-                }
-
-                if (_stream != null)
-                {
-                    _stream.Write(data, 0, length);
-                    
-                    var response = new byte[4096];
-                    var bytesRead = _stream.Read(response, 0, response.Length);
-                    
-                    if (bytesRead > 0)
-                    {
-                        var result = new byte[bytesRead];
-                        Array.Copy(response, result, bytesRead);
-                        return result;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"SOCKS Error: {ex.Message}");
+                Debug.WriteLine($"Error stopping tun2socks: {ex.Message}");
             }
 
-            return null;
+            StopMonitoringThread();
+
+            // Удаляем временный конфиг
+            if (!string.IsNullOrEmpty(_tempConfigPath) && SysFile.Exists(_tempConfigPath))
+            {
+                try { SysFile.Delete(_tempConfigPath); }
+                catch { }
+            }
+
+            base.OnDestroy();
+            Debug.WriteLine("=== VPN Service Stopped ===");
         }
 
-        public void Dispose()
-        {
-            _stream?.Dispose();
-            _client?.Dispose();
-        }
     }
 }

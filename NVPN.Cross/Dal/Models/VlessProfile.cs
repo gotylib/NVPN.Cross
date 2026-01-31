@@ -1,4 +1,4 @@
-﻿using System.Web;
+using System.Web;
 
 namespace NVPN.Cross.Dal.Models
 {
@@ -47,7 +47,7 @@ namespace NVPN.Cross.Dal.Models
             };
         }
 
-        internal static object GenerateXrayConfig(VlessProfile p, int inboundPort)
+        internal static object GenerateXrayConfig(VlessProfile p, int inboundPort, string? geoAssetPath = null, string? socksListen = null)
         {
             var tempDir = Path.GetTempPath();
             var realitySettings = p.Security == "reality"
@@ -62,6 +62,13 @@ namespace NVPN.Cross.Dal.Models
                 }
                 : null;
 
+            // КРИТИЧЕСКИ ВАЖНО: Настройка путей к geo-файлам для Android
+            var assetConfig = !string.IsNullOrEmpty(geoAssetPath) ? new
+            {
+                geoip = Path.Combine(geoAssetPath, "geoip.dat"),
+                geosite = Path.Combine(geoAssetPath, "geosite.dat")
+            } : null;
+
             return new
             {
                 log = new
@@ -70,6 +77,7 @@ namespace NVPN.Cross.Dal.Models
                     error = Path.Combine(tempDir, "xray_error.log"),
                     loglevel = "debug"
                 },
+                asset = assetConfig, // Добавляем секцию asset
                 dns = new
                 {
                     servers = new object[]
@@ -85,7 +93,7 @@ namespace NVPN.Cross.Dal.Models
                     {
                         tag = "socks-in",
                         protocol = "socks",
-                        listen = "127.0.0.1",
+                        listen = socksListen ?? "127.0.0.1",
                         port = inboundPort,
                         settings = new
                         {
@@ -97,7 +105,7 @@ namespace NVPN.Cross.Dal.Models
                     {
                         tag = "http-in",
                         protocol = "http",
-                        listen = "127.0.0.1",
+                        listen = socksListen ?? "127.0.0.1",
                         port = inboundPort + 1,
                         settings = new { }
                     }

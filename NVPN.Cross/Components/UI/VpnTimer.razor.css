@@ -1,0 +1,28 @@
+.vpn-timer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-divider);
+    min-height: 40px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.vpn-timer.active {
+    opacity: 1;
+}
+
+.vpn-timer-icon {
+    color: var(--mud-palette-primary);
+}
+
+.vpn-timer-text {
+    font-family: 'Courier New', monospace;
+    font-weight: 500;
+    font-size: 1.1rem;
+    letter-spacing: 0.05em;
+}

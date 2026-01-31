@@ -1,18 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
 
     <PropertyGroup>
-        <TargetFrameworks>net8.0-android;net8.0-ios;net8.0-maccatalyst</TargetFrameworks>
-        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net8.0-windows10.0.19041.0</TargetFrameworks>
-        <!-- Uncomment to also build the tizen app. You will need to install tizen by following this: https://github.com/Samsung/Tizen.NET -->
-        <!-- <TargetFrameworks>$(TargetFrameworks);net8.0-tizen</TargetFrameworks> -->
-
-        <!-- Note for MacCatalyst:
-            The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
-            When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
-            The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
-            either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
-        <!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
-
+        <!-- ОБНОВЛЕНО до .NET 9 -->
+        <TargetFrameworks>net9.0-android;net9.0-ios;net9.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net9.0-windows10.0.19041.0</TargetFrameworks>
+        
         <OutputType>Exe</OutputType>
         <RootNamespace>NVPN.Cross</RootNamespace>
         <UseMaui>true</UseMaui>
@@ -31,12 +23,23 @@
         <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
         <ApplicationVersion>1</ApplicationVersion>
 
-        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">14.2</SupportedOSPlatformVersion>
-        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">14.0</SupportedOSPlatformVersion>
+        <!-- Обновленные версии платформ -->
+        <!-- Для Android API 34 (Android 14) -->
+        <TargetPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">35</TargetPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
-        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
-        <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
-        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'tizen'">6.5</SupportedOSPlatformVersion>
+        
+        <!-- Для iOS 17+ -->
+        <TargetPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">18.0</TargetPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">18.0</SupportedOSPlatformVersion>
+        
+        <!-- Для Mac Catalyst 14+ -->
+        <TargetPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">18.0</TargetPlatformVersion>
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">18.0</SupportedOSPlatformVersion>
+        
+        <!-- Для Windows -->
+        <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</SupportedOSPlatformVersion>
+        <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</TargetPlatformMinVersion>
+        
     </PropertyGroup>
 
     <ItemGroup>
@@ -53,7 +56,7 @@
         <!-- Custom Fonts -->
         <MauiFont Include="Resources\Fonts\*" />
 
-        <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+        <!-- Raw Assets -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
 
         <!-- xray -->
@@ -61,16 +64,27 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.7" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.7" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
-        <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="$(MauiVersion)" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
-        <PackageReference Include="MudBlazor" Version="8.9.0" />
+        <!-- ЯВНЫЕ ВЕРСИИ пакетов MAUI для .NET 9 (9.0.60+ может содержать fix для Android fragment crash) -->
+        <PackageReference Include="Microsoft.AspNetCore.Components" Version="9.0.1" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="9.0.60" />
+        <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="9.0.60" />
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="9.0.60" />
+        
+        <!-- Остальные пакеты -->
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="9.0.0" />
+        <PackageReference Include="MudBlazor" Version="8.15.0" />
+        <PackageReference Include="PacketDotNet" Version="1.4.8" />
+        <PackageReference Include="Socks5" Version="1.1.0" />
     </ItemGroup>
 
-    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
+    <ItemGroup Condition="'$(TargetFramework)' == 'net9.0-android'">
+        <PackageReference Include="Xamarin.AndroidX.Core" Version="1.15.0.2" />
+        <PackageReference Include="Xamarin.AndroidX.Browser" Version="1.8.0.8" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net9.0-windows10.0.19041.0'">
         <Content Include="Resources\Xray\Windows\xray.exe">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
@@ -82,19 +96,34 @@
         </Content>
     </ItemGroup>
 
-    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-android'">
-        <AndroidAsset Include="Resources\Xray\Android\xray" />
-        <AndroidAsset Include="Resources\Xray\Android\geoip.dat" />
-        <AndroidAsset Include="Resources\Xray\Android\geosite.dat" />
-        <Content Include="Resources\Xray\Android\xray">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="Resources\Xray\Android\geoip.dat">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="Resources\Xray\Android\geosite.dat">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net9.0-android'">
+        <!-- КРИТИЧЕСКИ ВАЖНО: Разрешаем извлечение native библиотек -->
+        <!-- Это обходит SELinux ограничения на Android 10+ -->
+        <AndroidExtractNativeLibs>true</AndroidExtractNativeLibs>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net9.0-android'">
+        <!-- КРИТИЧЕСКИ ВАЖНО: Упаковываем бинарники как native libraries -->
+        <!-- На Android 10+ только файлы из lib/ директории могут быть выполнены -->
+        <AndroidNativeLibrary Include="Resources\Xray\Android\libxray.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <!-- xjasonlyu tun2socks — не работает на Android (SELinux). Опционально. -->
+        <AndroidNativeLibrary Include="Resources\Xray\Android\libtun2socks.so" Condition="Exists('Resources\Xray\Android\libtun2socks.so')">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <!-- libhev-socks5-tunnel.so — получить: .\download-sockstun-so.ps1 -ApkPath путь\к\sockstun.apk -->
+        <AndroidNativeLibrary Include="Resources\Xray\Android\libhev-socks5-tunnel.so" Condition="Exists('Resources\Xray\Android\libhev-socks5-tunnel.so')">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        
+        <!-- Geo-файлы кладем в корень assets для удобного доступа -->
+        <AndroidAsset Include="Resources\Xray\Android\geoip.dat">
+            <Link>geoip.dat</Link>
+        </AndroidAsset>
+        <AndroidAsset Include="Resources\Xray\Android\geosite.dat">
+            <Link>geosite.dat</Link>
+        </AndroidAsset>
     </ItemGroup>
 
 </Project>
