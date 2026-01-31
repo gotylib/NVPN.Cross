@@ -1,0 +1,55 @@
+name: Build .NET MAUI (.NET 9)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '9.0.308' # Конкретная стабильная версия .NET 9 SDK
+  CONFIGURATION: 'Release'
+
+jobs:
+  build-android:
+    runs-on: windows-latest # Или ubuntu-latest/macos-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Install MAUI Workloads
+      run: |
+        dotnet workload install maui-android
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build Android
+      run: dotnet build -c ${{ env.CONFIGURATION }} -f net9.0-android
+      # Можно добавить проверку выхода, чтобы убедиться, что сборка прошла
+      # continue-on-error: false
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+  
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+  
+      - name: Install MAUI Workloads (Windows + Android)
+        run: |
+          dotnet workload install maui-windows maui-android
+  
+      - name: Restore dependencies
+        run: dotnet restore
+  
+      - name: Build Windows
+        run: dotnet build -c ${{ env.CONFIGURATION }} -f net9.0-windows10.0.19041.0
